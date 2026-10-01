@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { RiDeleteBinLine } from 'react-icons/ri';
 
 import * as CFI from 'foliate-js/epubcfi.js';
+import { Overlayer } from 'foliate-js/overlayer.js';
 import { useEnv } from '@/context/EnvContext';
 import {
   BookNote,
@@ -123,6 +124,16 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   bookKey,
   contentInsets,
 }) => {
+  const selectionHighlightKey = 'readest-selection-preview';
+  type SelectionOverlayer = {
+    add: (
+      key: string,
+      range: Range,
+      draw: typeof Overlayer.highlight,
+      options: { color: string },
+    ) => void;
+    remove: (key: string) => void;
+  };
   const _ = useTranslation();
   const { envConfig, appService } = useEnv();
   const { settings, setSettingsDialogBookKey, setSettingsDialogOpen, setActiveSettingsItemId } =
@@ -232,6 +243,31 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
 
   const showingPopup =
     showAnnotPopup || showDictionaryPopup || showDeepLPopup || showProofreadPopup;
+
+  const clearSelectionHighlight = useCallback(() => {
+    const contents = view?.renderer?.getContents?.() ?? [];
+    for (const content of contents) {
+      (content.overlayer as SelectionOverlayer | undefined)?.remove(selectionHighlightKey);
+    }
+  }, [view]);
+
+  useEffect(() => {
+    clearSelectionHighlight();
+    if (!selection || !showingPopup || selection.annotated || selection.popup) return;
+
+    const contents = view?.renderer?.getContents?.() ?? [];
+    const segments = selection.segments ?? [selection];
+    for (const segment of segments) {
+      const content = contents.find((item) => item.index === segment.index);
+      const overlayer = content?.overlayer as SelectionOverlayer | undefined;
+      if (!overlayer) continue;
+      overlayer.add(selectionHighlightKey, segment.range, Overlayer.highlight, {
+        color: '#facc15',
+      });
+    }
+
+    return clearSelectionHighlight;
+  }, [clearSelectionHighlight, selection, showingPopup, view]);
 
   const popupPadding = useResponsiveSize(10);
   const trianglePadding = popupPadding * 2 + 6;
