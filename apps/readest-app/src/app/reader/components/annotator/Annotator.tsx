@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { RiDeleteBinLine } from 'react-icons/ri';
+import { FileCode2Icon, MessageCircleQuestionIcon, PaperclipIcon } from 'lucide-react';
 
 import * as CFI from 'foliate-js/epubcfi.js';
 import { Overlayer } from 'foliate-js/overlayer.js';
@@ -149,7 +150,13 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   const getView = useReaderStore((s) => s.getView);
   const getViewsById = useReaderStore((s) => s.getViewsById);
   const getViewSettings = useReaderStore((s) => s.getViewSettings);
-  const { setNotebookVisible, setNotebookActiveTab } = useNotebookStore();
+  const {
+    setNotebookVisible,
+    setNotebookActiveTab,
+    setAIQuestionAnchor,
+    addAIDraftAttachment,
+    requestSourceLocation,
+  } = useNotebookStore();
   const { clearBooknotesNav, isSideBarVisible } = useSidebarStore();
   const { listenToNativeTouchEvents } = useDeviceControlStore();
   const { loadCustomDictionaries } = useCustomDictionaryStore();
@@ -291,10 +298,14 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   const annotPopupMaxWidth = Math.min(useResponsiveSize(300), maxWidth);
   const annotPopupToolSize = useResponsiveSize(44);
   const toolbarToolTypes = getToolbarToolTypes(viewSettings.annotationToolbarItems, canShare);
+  const selectionActionCount = selection ? 3 : 0;
   const highlightOptionsAvailable = shouldShowHighlightOptions(toolbarToolTypes, selection ?? null);
   const annotPopupWidth = highlightOptionsAvailable
     ? annotPopupMaxWidth
-    : Math.min(Math.max(toolbarToolTypes.length, 1) * annotPopupToolSize, annotPopupMaxWidth);
+    : Math.min(
+        Math.max(toolbarToolTypes.length + selectionActionCount, 1) * annotPopupToolSize,
+        annotPopupMaxWidth,
+      );
   const annotPopupHeight = useResponsiveSize(44);
   const androidSelectionHandlerHeight = 0;
 
@@ -2365,6 +2376,66 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   // synthesized text with no real text node in the book) can't anchor
   // anything; and TTS always needs a range in a main view document.
   const popupSelectionNoCfi = !!selection?.popup && !selection?.cfi;
+  const getSelectionContext = () => {
+    if (!selection) return null;
+    const cfi =
+      selection.cfi ||
+      (selection.popup ? undefined : view?.getCFI(selection.index, selection.range));
+    return {
+      id: `${bookKey}:${cfi ?? `${selection.index}:${selection.text}`}`,
+      bookKey,
+      text: selection.text,
+      page: selection.page,
+      index: selection.index,
+      cfi,
+      href: selection.href,
+    };
+  };
+  const openAISelectionDraft = () => {
+    setNotebookActiveTab('ai');
+    setNotebookVisible(true);
+    handleDismissPopupAndSelection();
+  };
+  const selectionActionButtons = selection
+    ? [
+        {
+          tooltipText: _('Ask'),
+          Icon: MessageCircleQuestionIcon,
+          onClick: () => {
+            const context = getSelectionContext();
+            if (!context) return;
+            setAIQuestionAnchor(context);
+            openAISelectionDraft();
+          },
+        },
+        {
+          tooltipText: _('Attach'),
+          Icon: PaperclipIcon,
+          onClick: () => {
+            const context = getSelectionContext();
+            if (!context) return;
+            addAIDraftAttachment(context);
+            openAISelectionDraft();
+          },
+        },
+        {
+          tooltipText: _('View Source'),
+          Icon: FileCode2Icon,
+          onClick: () => {
+            const context = getSelectionContext();
+            if (!context) return;
+            requestSourceLocation(context);
+            handleDismissPopupAndSelection();
+            void eventDispatcher.dispatch('source-location-requested', context);
+            void eventDispatcher.dispatch('toast', {
+              type: 'info',
+              message: _('Source window is not connected yet'),
+              timeout: 2000,
+            });
+          },
+        },
+      ]
+    : [];
   const buildToolButton = (type: AnnotationToolType) => {
     const def = annotationToolButtons.find((button) => button.type === type);
     if (!def) return null;
@@ -2420,9 +2491,12 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
     }
   };
 
-  const toolButtons = toolbarToolTypes
-    .map(buildToolButton)
-    .filter((button): button is NonNullable<typeof button> => button !== null);
+  const toolButtons = [
+    ...selectionActionButtons,
+    ...toolbarToolTypes
+      .map(buildToolButton)
+      .filter((button): button is NonNullable<typeof button> => button !== null),
+  ];
 
   // The lookup popups never deselect (handleDictionary / handleTranslation /
   // handleProofread only flip popup flags), so a genuine selection is still

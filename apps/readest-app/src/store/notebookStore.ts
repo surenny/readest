@@ -4,6 +4,16 @@ import { TextSelection } from '@/utils/sel';
 
 export type NotebookTab = 'notes' | 'ai';
 
+export interface SelectionContext {
+  id: string;
+  bookKey: string;
+  text: string;
+  page: number;
+  index: number;
+  cfi?: string;
+  href?: string;
+}
+
 interface NotebookState {
   notebookWidth: string;
   isNotebookVisible: boolean;
@@ -17,6 +27,9 @@ interface NotebookState {
   notebookNewHighlightIds: string[];
   notebookEditAnnotation: BookNote | null;
   notebookAnnotationDrafts: { [key: string]: string };
+  aiQuestionAnchor: SelectionContext | null;
+  aiDraftAttachments: SelectionContext[];
+  sourceLocationRequest: SelectionContext | null;
   getIsNotebookVisible: () => boolean;
   toggleNotebook: () => void;
   toggleNotebookPin: () => void;
@@ -30,6 +43,11 @@ interface NotebookState {
   setNotebookEditAnnotation: (note: BookNote | null) => void;
   saveNotebookAnnotationDraft: (key: string, note: string) => void;
   getNotebookAnnotationDraft: (key: string) => string | undefined;
+  setAIQuestionAnchor: (context: SelectionContext | null) => void;
+  addAIDraftAttachment: (context: SelectionContext) => void;
+  removeAIDraftAttachment: (id: string) => void;
+  clearAISelectionDraft: () => void;
+  requestSourceLocation: (context: SelectionContext | null) => void;
 }
 
 export const useNotebookStore = create<NotebookState>((set, get) => ({
@@ -41,6 +59,9 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   notebookNewHighlightIds: [],
   notebookEditAnnotation: null,
   notebookAnnotationDrafts: {},
+  aiQuestionAnchor: null,
+  aiDraftAttachments: [],
+  sourceLocationRequest: null,
   getIsNotebookVisible: () => get().isNotebookVisible,
   getNotebookWidth: () => get().notebookWidth,
   setNotebookWidth: (width: string) => set({ notebookWidth: width }),
@@ -58,4 +79,17 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
       notebookAnnotationDrafts: { ...state.notebookAnnotationDrafts, [key]: note },
     })),
   getNotebookAnnotationDraft: (key: string) => get().notebookAnnotationDrafts[key],
+  setAIQuestionAnchor: (context) => set({ aiQuestionAnchor: context }),
+  addAIDraftAttachment: (context) =>
+    set((state) => ({
+      aiDraftAttachments: state.aiDraftAttachments.some((item) => item.id === context.id)
+        ? state.aiDraftAttachments
+        : [...state.aiDraftAttachments, context],
+    })),
+  removeAIDraftAttachment: (id) =>
+    set((state) => ({
+      aiDraftAttachments: state.aiDraftAttachments.filter((item) => item.id !== id),
+    })),
+  clearAISelectionDraft: () => set({ aiQuestionAnchor: null, aiDraftAttachments: [] }),
+  requestSourceLocation: (context) => set({ sourceLocationRequest: context }),
 }));
