@@ -2,9 +2,11 @@ name: NL-270 Windows v16
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - agent/ginit-codex/0163cd514799
+    inputs:
+      source_sha:
+        description: Immutable source commit to build
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -16,7 +18,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ inputs.source_sha }}
           submodules: 'true'
+      - name: verify immutable source
+        shell: bash
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "${{ inputs.source_sha }}"
+          echo "Source SHA: $actual_sha"
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -24,12 +33,19 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --prefer-offline
       - run: pnpm --filter @readest/readest-app setup-vendors
+      - name: verify selection and release boundaries
+        shell: bash
+        run: |
+          cd apps/readest-app
+          pnpm exec dotenv -e .env -e .env.test.local -- vitest run \
+            src/__tests__/utils/selection-range-snapshot.test.ts \
+            src/__tests__/release/nl270-release-boundary.test.ts
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
         with:
-          key: nl-270-windows-x64-cargo-v16
+          key: nl-270-windows-x64-cargo-v17
       - name: create Tauri environment
         shell: bash
         run: |
@@ -41,19 +57,39 @@ jobs:
           NODE_OPTIONS: '--max-old-space-size=8192'
         run: |
           cd apps/readest-app
-          pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis --config '{"productName":"Readest NL-270","identifier":"com.readest.nl270","version":"0.12.23","bundle":{"createUpdaterArtifacts":false}}'
-      - name: verify installer
+          pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis --config '{"productName":"Readest NL-270","identifier":"com.readest.nl270","version":"0.12.30","bundle":{"createUpdaterArtifacts":false}}'
+      - name: verify installer and payload
         shell: pwsh
         run: |
           $installer = Get-ChildItem target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe | Select-Object -First 1
           if (-not $installer) { throw "Windows installer was not generated" }
+          & 7z t $installer.FullName
+          if ($LASTEXITCODE -ne 0) { throw "NSIS integrity check failed" }
+          $payloadDir = Join-Path $env:RUNNER_TEMP "nl270-payload"
+          New-Item -ItemType Directory -Force $payloadDir | Out-Null
+          & 7z x -y "-o$payloadDir" $installer.FullName | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "NSIS extraction failed" }
+          $executable = Join-Path $payloadDir "readest.exe"
+          if (-not (Test-Path $executable)) { throw "readest.exe missing from payload" }
+          $payloadText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($executable))
+          if (-not $payloadText.Contains("com.readest.nl270")) { throw "Expected identifier missing" }
+          $forbidden = @(
+            "com.bilingify.readest",
+            "com.ai4m.nl270.reader",
+            "nl270-reader",
+            "https://download.readest.com/releases/latest.json",
+            "https://github.com/readest/readest/releases/latest/download/latest.json"
+          )
+          foreach ($needle in $forbidden) {
+            if ($payloadText.Contains($needle)) { throw "Forbidden payload string: $needle" }
+          }
           $hash = Get-FileHash $installer.FullName -Algorithm SHA256
           Write-Host "Installer: $($installer.Name)"
           Write-Host "Size: $($installer.Length) bytes"
           Write-Host "SHA256: $($hash.Hash)"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: Readest-NL-270-Windows-x64-v16
+          name: Readest-NL-270-Windows-x64-v17
           path: target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
           compression-level: 0
