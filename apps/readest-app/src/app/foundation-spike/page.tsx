@@ -83,6 +83,7 @@ interface WindowPosition {
 interface PendingSelection {
   anchor: SourceDocAnchor;
   text: string;
+  range: Range;
   x: number;
   y: number;
 }
@@ -493,7 +494,7 @@ export default function FoundationSpike() {
           ? selectionRect.top - menuHeight - 8
           : selectionRect.bottom + 8;
       const y = Math.max(12, Math.min(window.innerHeight - menuHeight - 12, preferredY));
-      setPendingSelection({ anchor: nextAnchor, text: nextText, x, y });
+      setPendingSelection({ anchor: nextAnchor, text: nextText, range: range.cloneRange(), x, y });
       setSelectionError('');
     } catch {
       setSelectionError('选区无法建立锚点，请从前向后选择连续正文。');
@@ -621,6 +622,17 @@ export default function FoundationSpike() {
     setSelectedAnchors([]);
     setPendingSelection(null);
     setActiveThreadId(null);
+    setSelectionError('');
+    setAnnotationPickerBlockId(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  const startUnanchoredChat = () => {
+    setActiveThreadId(null);
+    setAnchor(null);
+    setSelectedAnchors([]);
+    setPendingSelection(null);
+    setQuestionAttachments([]);
     setSelectionError('');
     setAnnotationPickerBlockId(null);
     window.getSelection()?.removeAllRanges();
@@ -821,6 +833,7 @@ export default function FoundationSpike() {
         if (range) selectionRanges.push(range);
       }
     }
+    if (pendingSelection) selectionRanges.push(pendingSelection.range.cloneRange());
     css.highlights.set(ANNOTATION_HIGHLIGHT, new HighlightClass(...annotationRanges));
     css.highlights.set(ACTIVE_ANNOTATION_HIGHLIGHT, new HighlightClass(...activeAnnotationRanges));
     css.highlights.set(SELECTION_HIGHLIGHT, new HighlightClass(...selectionRanges));
@@ -841,7 +854,15 @@ export default function FoundationSpike() {
       css.highlights?.delete(CITATION_HIGHLIGHT);
       css.highlights?.delete(SELECTION_HIGHLIGHT);
     };
-  });
+  }, [
+    activeThreadId,
+    highlightedCitation,
+    pendingSelection,
+    previewedThreadId,
+    selectedAnchors,
+    threads,
+    readingSettings.annotationDisplay,
+  ]);
 
   const openThreadAtPointer = (
     event: ReactMouseEvent<HTMLElement>,
@@ -1705,14 +1726,24 @@ export default function FoundationSpike() {
                     </q>
                   ) : null}
                 </div>
-                <button
-                  className='h-8 w-8 shrink-0 rounded-lg text-lg hover:bg-black/5'
-                  aria-label='打开批注管理'
-                  title='批注管理'
-                  onClick={() => setAnnotationManagerOpen(true)}
-                >
-                  ☷
-                </button>
+                <div className='flex shrink-0 items-center gap-1'>
+                  <button
+                    className='h-8 w-8 rounded-lg text-lg hover:bg-black/5'
+                    aria-label='新建无锚点对话'
+                    title='新建无锚点对话'
+                    onClick={startUnanchoredChat}
+                  >
+                    +
+                  </button>
+                  <button
+                    className='h-8 w-8 rounded-lg text-lg hover:bg-black/5'
+                    aria-label='打开批注管理'
+                    title='批注管理'
+                    onClick={() => setAnnotationManagerOpen(true)}
+                  >
+                    ☷
+                  </button>
+                </div>
               </header>
 
               <section

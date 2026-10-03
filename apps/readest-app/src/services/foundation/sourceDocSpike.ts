@@ -301,8 +301,27 @@ function createId(prefix: string): string {
     : `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 
+function decodeMarkdownEntities(source: string): string {
+  return source.replace(
+    /&(#x[\da-f]+|#\d+|amp|lt|gt|quot|apos|nbsp);/gi,
+    (entity, value: string) => {
+      const lower = value.toLowerCase();
+      if (lower === 'amp') return '&';
+      if (lower === 'lt') return '<';
+      if (lower === 'gt') return '>';
+      if (lower === 'quot') return '"';
+      if (lower === 'apos') return "'";
+      if (lower === 'nbsp') return ' ';
+      const codePoint = lower.startsWith('#x')
+        ? Number.parseInt(value.slice(2), 16)
+        : Number.parseInt(value.slice(1), 10);
+      return Number.isNaN(codePoint) ? entity : String.fromCodePoint(codePoint);
+    },
+  );
+}
+
 function markdownToSemanticText(source: string, type?: SourceDocBlock['type']): string {
-  const plain = source
+  const plain = decodeMarkdownEntities(source)
     .replace(/^```[^\n]*\n?/gm, '')
     .replace(/^```$/gm, '')
     .replace(/^#{1,6}\s+/gm, '')

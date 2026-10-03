@@ -577,6 +577,35 @@ describe('foundation spike page', () => {
     expect(sourceText.querySelector('button')).toBeNull();
   });
 
+  it('keeps entity text exact and exposes a fresh unanchored conversation', async () => {
+    render(<FoundationSpike />);
+    fireEvent.change(screen.getByLabelText('导入 Markdown'), {
+      target: {
+        files: [new File(['实体：a &gt; b'], 'entity.md', { type: 'text/markdown' })],
+      },
+    });
+    const text = await screen.findByText('实体：a > b');
+    expect(text).not.toBeNull();
+    const source = text.closest('[data-source-text]')!;
+    const walker = document.createTreeWalker(source, NodeFilter.SHOW_TEXT);
+    const node = walker.nextNode()!;
+    const offset = node.textContent!.indexOf('>');
+    const range = document.createRange();
+    range.setStart(node, offset);
+    range.setEnd(node, offset + 1);
+    window.getSelection()?.removeAllRanges();
+    window.getSelection()?.addRange(range);
+    fireEvent.mouseUp(screen.getByLabelText('SOURCE_DOC 阅读区'));
+    fireEvent.click(screen.getByRole('button', { name: '针对选中文字提问' }));
+    expect(screen.getByTestId('active-quote').textContent).toBe('>');
+
+    fireEvent.click(screen.getByRole('button', { name: '新建无锚点对话' }));
+    fireEvent.change(screen.getByLabelText('问题'), { target: { value: '无锚点问题' } });
+    fireEvent.click(screen.getByRole('button', { name: '提问' }));
+    const stored = JSON.parse(localStorage.getItem('readest:annotation-schema:v1') ?? '{}');
+    expect(stored.threads.at(-1).anchorId).toBeNull();
+  });
+
   it('imports a Markdown file through the reader toolbar', async () => {
     render(<FoundationSpike />);
     const input = screen.getByLabelText('导入 Markdown');
