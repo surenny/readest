@@ -480,10 +480,7 @@ export const useTextSelector = (
       stale.forEach((c) => c.doc.getSelection()?.removeAllRanges());
       releaseProgrammaticSelection();
     }
-    // Selection.getRangeAt() returns the live, associated Range by reference.
-    // Clone only for double-click normalization so native touch paths retain
-    // their established Range behavior and browser handles stay untouched.
-    const range = trimPoint ? liveRange.cloneRange() : liveRange;
+    const range = liveRange.cloneRange();
     if (trimPoint) trimRangeWhitespaceAroundPoint(range, trimPoint.node, trimPoint.offset);
     const progress = getProgress(bookKey);
     setSelection({
