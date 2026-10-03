@@ -81,7 +81,6 @@
 		25CB7597C040DC2E2BBAAD58 /* ReadingWidgetViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReadingWidgetViews.swift; sourceTree = "<group>"; };
 		27B7FEAE989ABFF6C8FF0F77 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		282EE616A1F2B81C6121C9B6 /* transfer_file.rs */ = {isa = PBXFileReference; path = transfer_file.rs; sourceTree = "<group>"; };
-		2D116E0618AF542C1A1D9593 /* nightly_update.rs */ = {isa = PBXFileReference; path = nightly_update.rs; sourceTree = "<group>"; };
 		2E226C87AD0606FFF9DDEE11 /* dir_scanner.rs */ = {isa = PBXFileReference; path = dir_scanner.rs; sourceTree = "<group>"; };
 		2F0000D58F392BC2F808417D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		30D8E7F6023C1DF41F8BD47C /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
@@ -351,7 +350,6 @@
 				A7318D4877A991A1DAB79861 /* lib.rs */,
 				9B22460180952B7C3F11DE9D /* main.rs */,
 				AF314D0DE71EED6A946E0616 /* mobi_parser.rs */,
-				2D116E0618AF542C1A1D9593 /* nightly_update.rs */,
 				46E88042CAF3013F6107F17A /* parser_common.rs */,
 				9B00698C6D8D59E6093819A0 /* range_file.rs */,
 				BF6CBF86E39770276E8FAFB4 /* sentry_config.rs */,

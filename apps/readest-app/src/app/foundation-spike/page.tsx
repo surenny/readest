@@ -83,7 +83,6 @@ interface WindowPosition {
 interface PendingSelection {
   anchor: SourceDocAnchor;
   text: string;
-  range: Range;
   x: number;
   y: number;
 }
@@ -129,6 +128,23 @@ function domRange(element: HTMLElement, start: number, end: number): Range | nul
   range.setStart(...startBoundary);
   range.setEnd(...endBoundary);
   return range;
+}
+
+export function rangesForSourceAnchor(anchor: SourceDocAnchor): Range[] {
+  return anchor.selectedBlockIds.flatMap((blockId, index) => {
+    const element = Array.from(
+      globalThis.document.querySelectorAll<HTMLElement>('[data-source-text]'),
+    ).find((candidate) => candidate.dataset['sourceText'] === blockId);
+    if (!element) return [];
+    const range = domRange(
+      element,
+      index === 0 ? anchor.startOffset : 0,
+      index === anchor.selectedBlockIds.length - 1
+        ? anchor.endOffset
+        : (element.textContent?.length ?? 0),
+    );
+    return range ? [range] : [];
+  });
 }
 
 export default function FoundationSpike() {
@@ -494,7 +510,7 @@ export default function FoundationSpike() {
           ? selectionRect.top - menuHeight - 8
           : selectionRect.bottom + 8;
       const y = Math.max(12, Math.min(window.innerHeight - menuHeight - 12, preferredY));
-      setPendingSelection({ anchor: nextAnchor, text: nextText, range: range.cloneRange(), x, y });
+      setPendingSelection({ anchor: nextAnchor, text: nextText, x, y });
       setSelectionError('');
     } catch {
       setSelectionError('选区无法建立锚点，请从前向后选择连续正文。');
@@ -833,7 +849,7 @@ export default function FoundationSpike() {
         if (range) selectionRanges.push(range);
       }
     }
-    if (pendingSelection) selectionRanges.push(pendingSelection.range.cloneRange());
+    if (pendingSelection) selectionRanges.push(...rangesForSourceAnchor(pendingSelection.anchor));
     css.highlights.set(ANNOTATION_HIGHLIGHT, new HighlightClass(...annotationRanges));
     css.highlights.set(ACTIVE_ANNOTATION_HIGHLIGHT, new HighlightClass(...activeAnnotationRanges));
     css.highlights.set(SELECTION_HIGHLIGHT, new HighlightClass(...selectionRanges));

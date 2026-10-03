@@ -2,9 +2,11 @@ name: NL-270 Windows v16
 
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - agent/ginit-codex/0163cd514799
+    inputs:
+      source_sha:
+        description: Immutable source commit to build
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -12,11 +14,22 @@ permissions:
 jobs:
   windows_x64:
     runs-on: windows-latest
-    timeout-minutes: 75
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          ref: ${{ inputs.source_sha }}
           submodules: 'true'
+      - name: verify immutable source
+        shell: bash
+        run: |
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "${{ inputs.source_sha }}"
+          git merge-base --is-ancestor 2951447f13ff1382e3d0c21cdeaa67805fd44035 "$actual_sha"
+          git diff --name-only 2951447f13ff1382e3d0c21cdeaa67805fd44035.."$actual_sha" | sort > actual-change-files.txt
+          sort .github/nl270-v19-change-allowlist.txt > expected-change-files.txt
+          diff -u expected-change-files.txt actual-change-files.txt
+          echo "Source SHA: $actual_sha"
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
@@ -24,12 +37,35 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile --prefer-offline
       - run: pnpm --filter @readest/readest-app setup-vendors
+      - name: verify selection and release boundaries
+        shell: bash
+        run: |
+          cd apps/readest-app
+          pnpm exec dotenv -e .env -e .env.test.local -- vitest run \
+            src/__tests__/foundation/FoundationSpike.test.tsx \
+            src/__tests__/foundation/sourceDocSpike.test.ts \
+            src/__tests__/foundation/sourceDocumentAdapter.test.ts \
+            src/__tests__/release/nl270-release-boundary.test.ts
+      - name: verify TypeScript, formatting, and full unit suite
+        shell: bash
+        run: |
+          cd apps/readest-app
+          pnpm lint
+          pnpm format:check
+          pnpm test -- --watch=false
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
         with:
-          key: nl-270-windows-x64-cargo-v16
+          key: nl-270-windows-x64-cargo-v19
+      - name: verify Rust formatting, lint, and tests
+        shell: bash
+        run: |
+          cd apps/readest-app
+          pnpm fmt:check
+          pnpm clippy:check
+          pnpm test:rust
       - name: create Tauri environment
         shell: bash
         run: |
@@ -40,21 +76,60 @@ jobs:
         shell: bash
         env:
           NODE_OPTIONS: '--max-old-space-size=8192'
+          READEST_FOUNDATION_SPIKE: '1'
         run: |
           cd apps/readest-app
-          READEST_FOUNDATION_SPIKE=1 pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis --config '{"productName":"Readest NL-270","identifier":"com.readest.nl270","version":"0.12.29","bundle":{"createUpdaterArtifacts":false}}'
-      - name: verify installer
+          pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis --config '{"productName":"Readest NL-270","identifier":"com.readest.nl270","version":"0.12.32","bundle":{"createUpdaterArtifacts":false}}'
+          test -f out/foundation-spike.html
+          rg -l --fixed-strings '新建无锚点对话' out/_next/static
+          rg -l --fixed-strings '针对选中文字提问' out/_next/static
+          rg -l --fixed-strings 'data-selection-action-menu' out/_next/static
+          rg -l --fixed-strings 'foundation-selection' out/_next/static
+          frontend_hash="$(find out -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+          frontend_files="$(find out -type f | wc -l | tr -d ' ')"
+          echo "Frontend files: $frontend_files"
+          echo "Frontend SHA256: $frontend_hash"
+      - name: verify installer and payload
         shell: pwsh
         run: |
           $installer = Get-ChildItem target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe | Select-Object -First 1
           if (-not $installer) { throw "Windows installer was not generated" }
+          & 7z t $installer.FullName
+          if ($LASTEXITCODE -ne 0) { throw "NSIS integrity check failed" }
+          $payloadDir = Join-Path $env:RUNNER_TEMP "nl270-payload"
+          New-Item -ItemType Directory -Force $payloadDir | Out-Null
+          & 7z x -y "-o$payloadDir" $installer.FullName | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "NSIS extraction failed" }
+          $executable = Join-Path $payloadDir "readest.exe"
+          if (-not (Test-Path $executable)) { throw "readest.exe missing from payload" }
+          $header = [IO.File]::ReadAllBytes($executable)[0..1]
+          if ($header[0] -ne 0x4D -or $header[1] -ne 0x5A) { throw "readest.exe is not a PE executable" }
+          $payloadText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($executable))
+          if (-not $payloadText.Contains("com.readest.nl270")) { throw "Expected identifier missing" }
+          $forbidden = @(
+            "com.bilingify.readest",
+            "com.ai4m.nl270.reader",
+            "nl270-reader",
+            "https://download.readest.com/releases/latest.json",
+            "https://github.com/readest/readest/releases/latest/download/latest.json"
+          )
+          foreach ($needle in $forbidden) {
+            if ($payloadText.Contains($needle)) { throw "Forbidden payload string: $needle" }
+          }
+          $payloadHash = Get-FileHash $executable -Algorithm SHA256
+          $versionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($executable)
           $hash = Get-FileHash $installer.FullName -Algorithm SHA256
+          Write-Host "Payload: $($executable | Split-Path -Leaf)"
+          Write-Host "Payload size: $((Get-Item $executable).Length) bytes"
+          Write-Host "Payload SHA256: $($payloadHash.Hash)"
+          Write-Host "PE product: $($versionInfo.ProductName)"
+          Write-Host "PE version: $($versionInfo.ProductVersion)"
           Write-Host "Installer: $($installer.Name)"
           Write-Host "Size: $($installer.Length) bytes"
           Write-Host "SHA256: $($hash.Hash)"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: Readest-NL-270-Windows-x64-v16
+          name: Readest-NL-270-Windows-x64-v19
           path: target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
           compression-level: 0

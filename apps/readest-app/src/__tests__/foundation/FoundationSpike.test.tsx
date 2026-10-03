@@ -11,7 +11,11 @@ vi.mock('@/context/EnvContext', () => ({
   useEnv: () => ({ appService: libraryAppService }),
 }));
 
-import FoundationSpike, { restoredWindowSize } from '@/app/foundation-spike/page';
+import FoundationSpike, {
+  rangesForSourceAnchor,
+  restoredWindowSize,
+} from '@/app/foundation-spike/page';
+import { createRangeAnchor, SOURCE_DOC_FIXTURE } from '@/services/foundation/sourceDocSpike';
 
 describe('foundation spike page', () => {
   beforeEach(() => {
@@ -75,6 +79,35 @@ describe('foundation spike page', () => {
     fireEvent.pointerDown(screen.getByTestId('reader-gutter'));
     expect(screen.queryByRole('toolbar', { name: '选中文字操作' })).toBeNull();
     expect(screen.queryByTestId('active-quote')).toBeNull();
+  });
+
+  it('rebuilds the exact selection highlight from the current rendered text', () => {
+    const block = SOURCE_DOC_FIXTURE.blocks.find((item) => item.id === 'block-02')!;
+    const startOffset = block.semanticText.indexOf('紧致性');
+    const anchor = createRangeAnchor(
+      SOURCE_DOC_FIXTURE,
+      block.id,
+      startOffset,
+      block.id,
+      startOffset + '紧致性'.length,
+    );
+    const sourceText = document.createElement('div');
+    sourceText.dataset['sourceText'] = block.id;
+    sourceText.textContent = block.semanticText;
+    document.body.append(sourceText);
+
+    const firstRange = rangesForSourceAnchor(anchor)[0]!;
+    expect(firstRange.toString()).toBe('紧致性');
+    expect(sourceText.contains(firstRange.startContainer)).toBe(true);
+
+    const rerenderedSourceText = sourceText.cloneNode(true) as HTMLElement;
+    sourceText.replaceWith(rerenderedSourceText);
+    const rebuiltRange = rangesForSourceAnchor(anchor)[0]!;
+
+    expect(rebuiltRange.toString()).toBe('紧致性');
+    expect(rebuiltRange.startContainer.isConnected).toBe(true);
+    expect(rerenderedSourceText.contains(rebuiltRange.startContainer)).toBe(true);
+    rerenderedSourceText.remove();
   });
 
   it('requires explicit actions for Ctrl selections and attachments', () => {
