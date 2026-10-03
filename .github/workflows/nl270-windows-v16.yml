@@ -47,7 +47,7 @@ jobs:
           targets: x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
         with:
-          key: nl-270-windows-x64-cargo-v17
+          key: nl-270-windows-x64-cargo-v18
       - name: create Tauri environment
         shell: bash
         run: |
@@ -59,7 +59,11 @@ jobs:
           NODE_OPTIONS: '--max-old-space-size=8192'
         run: |
           cd apps/readest-app
-          pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis --config '{"productName":"Readest NL-270","identifier":"com.readest.nl270","version":"0.12.30","bundle":{"createUpdaterArtifacts":false}}'
+          pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis --config '{"productName":"Readest NL-270","identifier":"com.readest.nl270","version":"0.12.31","bundle":{"createUpdaterArtifacts":false}}'
+          frontend_hash="$(find out -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
+          frontend_files="$(find out -type f | wc -l | tr -d ' ')"
+          echo "Frontend files: $frontend_files"
+          echo "Frontend SHA256: $frontend_hash"
       - name: verify installer and payload
         shell: pwsh
         run: |
@@ -73,6 +77,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "NSIS extraction failed" }
           $executable = Join-Path $payloadDir "readest.exe"
           if (-not (Test-Path $executable)) { throw "readest.exe missing from payload" }
+          $header = [IO.File]::ReadAllBytes($executable)[0..1]
+          if ($header[0] -ne 0x4D -or $header[1] -ne 0x5A) { throw "readest.exe is not a PE executable" }
           $payloadText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($executable))
           if (-not $payloadText.Contains("com.readest.nl270")) { throw "Expected identifier missing" }
           $forbidden = @(
@@ -85,13 +91,20 @@ jobs:
           foreach ($needle in $forbidden) {
             if ($payloadText.Contains($needle)) { throw "Forbidden payload string: $needle" }
           }
+          $payloadHash = Get-FileHash $executable -Algorithm SHA256
+          $versionInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo($executable)
           $hash = Get-FileHash $installer.FullName -Algorithm SHA256
+          Write-Host "Payload: $($executable | Split-Path -Leaf)"
+          Write-Host "Payload size: $((Get-Item $executable).Length) bytes"
+          Write-Host "Payload SHA256: $($payloadHash.Hash)"
+          Write-Host "PE product: $($versionInfo.ProductName)"
+          Write-Host "PE version: $($versionInfo.ProductVersion)"
           Write-Host "Installer: $($installer.Name)"
           Write-Host "Size: $($installer.Length) bytes"
           Write-Host "SHA256: $($hash.Hash)"
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
-          name: Readest-NL-270-Windows-x64-v17
+          name: Readest-NL-270-Windows-x64-v18
           path: target/x86_64-pc-windows-msvc/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
           compression-level: 0
