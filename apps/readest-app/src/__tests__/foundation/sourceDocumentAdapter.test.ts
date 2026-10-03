@@ -112,7 +112,27 @@ describe('source document adapters', () => {
       false,
     );
     expect(full.document.blocks.some((block) => block.semanticText.includes('首页'))).toBe(true);
+    const table = full.document.blocks.find((block) => block.type === 'table');
+    expect(table?.sourceText).toContain('| 不可遗漏的数据 |');
+    expect(table?.sourceText).toContain('| --- |');
     expect(full.htmlMode).toBe('full');
+  });
+
+  it('preserves HTML table rows and escaped cell content in full-page mode', async () => {
+    const source = `<!doctype html><title>数据表</title><body><main><h1>统计</h1>
+      <table><thead><tr><th>项目</th><th>结果</th></tr></thead><tbody>
+      <tr><td>A | B</td><td>通过</td></tr><tr><td>第二行</td><td>42</td></tr>
+      </tbody></table></main></body>`;
+    const result = await parseLibrarySourceDocument(
+      book('HTML'),
+      new File([source], 'table.html', { type: 'text/html' }),
+      { htmlMode: 'full' },
+    );
+
+    const table = result.document.blocks.find((block) => block.type === 'table');
+    expect(table?.sourceText).toBe(
+      '| 项目 | 结果 |\n| --- | --- |\n| A \\| B | 通过 |\n| 第二行 | 42 |',
+    );
   });
 
   it('bridges reflowable EPUB spine sections to unified blocks and CFI locators', async () => {

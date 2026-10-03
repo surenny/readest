@@ -100,6 +100,7 @@ export const useTextSelector = (
   // (#4728) has no pointer drag — handleSelectionchange uses this to refresh the
   // popup/range for keyboard-driven changes while still deferring mid-drag.
   const isPointerDown = useRef(false);
+  const additiveSelectionRef = useRef(false);
   // Tracked from the moves themselves rather than from pointerdown, because a
   // WebKit selection handle drag delivers moves without a matching down.
   const pointerDragActive = useRef(false);
@@ -481,9 +482,9 @@ export const useTextSelector = (
       releaseProgrammaticSelection();
     }
     // Selection.getRangeAt() returns the live, associated Range by reference.
-    // Clone only for double-click normalization so native touch paths retain
-    // their established Range behavior and browser handles stay untouched.
-    const range = trimPoint ? liveRange.cloneRange() : liveRange;
+    // Every published selection must own a snapshot: a later Ctrl/Cmd drag
+    // mutates the browser's live range and must not rewrite the earlier segment.
+    const range = liveRange.cloneRange();
     if (trimPoint) trimRangeWhitespaceAroundPoint(range, trimPoint.node, trimPoint.offset);
     const progress = getProgress(bookKey);
     setSelection({
@@ -494,6 +495,7 @@ export const useTextSelector = (
       range,
       index,
       handlesSuppressed,
+      additive: additiveSelectionRef.current,
     });
   };
 
@@ -622,6 +624,7 @@ export const useTextSelector = (
       doc.documentElement.classList.add(LINK_TOUCH_HOLD_CLASS);
     }
     isPointerDown.current = true;
+    additiveSelectionRef.current = ev.ctrlKey || ev.metaKey;
     clearCrossDoc();
     dragAnchorRef.current = null;
 
@@ -1125,6 +1128,10 @@ export const useTextSelector = (
     } else {
       // Selection cleared (e.g. clicking outside the selection).
       // Dismiss immediately on all platforms.
+      // Starting an additive Ctrl/Cmd drag briefly clears the browser's old
+      // live selection before the new range exists. Keep the cached batch and
+      // popup state alive until pointerup publishes the replacement segment.
+      if (additiveSelectionRef.current && isPointerDown.current) return;
       if (isTextSelected.current) {
         handleDismissPopup();
         isTextSelected.current = false;

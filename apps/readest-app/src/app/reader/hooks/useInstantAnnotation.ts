@@ -26,7 +26,7 @@ export const useInstantAnnotation = ({
   const { envConfig } = useEnv();
   const { settings } = useSettingsStore();
   const { getConfig, saveConfig, updateBooknotes } = useBookDataStore();
-  const { getView, getViewsById, getViewSettings, getProgress } = useReaderStore();
+  const { getView, getViewsById, getProgress } = useReaderStore();
 
   const startPointRef = useRef<Point | null>(null);
   // The DOM position the drag started at, captured once at pointer-down. The
@@ -50,12 +50,8 @@ export const useInstantAnnotation = ({
   const dragPaintedRef = useRef(false);
 
   const isInstantAnnotationEnabled = useCallback(() => {
-    const viewSettings = getViewSettings(bookKey);
-    return (
-      viewSettings?.enableAnnotationQuickActions &&
-      viewSettings?.annotationQuickAction === 'highlight'
-    );
-  }, [bookKey, getViewSettings]);
+    return false;
+  }, []);
 
   const clearPreviewAnnotation = useCallback(() => {
     if (previewAnnotationRef.current) {

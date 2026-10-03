@@ -1,6 +1,98 @@
 import { expect, test } from '@playwright/test';
 
 test.describe('NL-270 foundation spike', () => {
+  test('shows a neutral action menu beside normal and Ctrl text selections', async ({ page }) => {
+    await page.goto('/foundation-spike');
+    const sourceBlock = page.getByTestId('source-block-block-02');
+    const selectText = async (ctrlKey = false) =>
+      sourceBlock.evaluate((element, useControl) => {
+        const textNode = element.querySelector('[data-source-text]')!.querySelector('p')!
+          .firstChild!;
+        const text = '紧致性';
+        const start = textNode.textContent!.indexOf(text);
+        const range = document.createRange();
+        range.setStart(textNode, start);
+        range.setEnd(textNode, start + text.length);
+        const selection = window.getSelection()!;
+        selection.removeAllRanges();
+        selection.addRange(range);
+        const bounds = range.getBoundingClientRect();
+        element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, ctrlKey: useControl }));
+        return { top: bounds.top, bottom: bounds.bottom };
+      }, ctrlKey);
+
+    const selectionBounds = await selectText();
+    const menu = page.getByRole('toolbar', { name: '选中文字操作' });
+    await expect(menu).toBeVisible();
+    await expect(page.getByRole('button', { name: '针对选中文字提问' })).toBeVisible();
+    await expect(page.getByRole('button', { name: '将选中文字作为附件' })).toBeVisible();
+    await expect(page.getByTestId('active-quote')).toHaveCount(0);
+    await expect(page.getByTestId('question-attachments-list')).toHaveCount(0);
+    const menuBox = await menu.boundingBox();
+    if (!menuBox) throw new Error('Selection action menu is not visible');
+    expect(
+      Math.min(
+        Math.abs(menuBox.y + menuBox.height - selectionBounds.top),
+        Math.abs(menuBox.y - selectionBounds.bottom),
+      ),
+    ).toBeLessThanOrEqual(12);
+
+    await page.getByTestId('reader-gutter').dispatchEvent('pointerdown');
+    await expect(menu).toHaveCount(0);
+    await expect(page.getByTestId('active-quote')).toHaveCount(0);
+
+    await selectText(true);
+    await expect(menu).toBeVisible();
+    await expect(page.getByTestId('active-quote')).toHaveCount(0);
+    await page.getByRole('button', { name: '将选中文字作为附件' }).click();
+    await expect(page.getByTestId('question-attachments-list')).toContainText('紧致性');
+    await expect(page.getByTestId('active-quote')).toHaveCount(0);
+  });
+
+  test('accumulates question targets and isolates the next Ctrl selection batch', async ({
+    page,
+  }) => {
+    await page.goto('/foundation-spike');
+    const sourceBlock = page.getByTestId('source-block-block-02');
+    const selectForQuestion = async (text: string, ctrlKey = false) => {
+      await sourceBlock.evaluate(
+        (element, selectionInput) => {
+          const textNode = element.querySelector('[data-source-text]')!.querySelector('p')!
+            .firstChild!;
+          const start = textNode.textContent!.indexOf(selectionInput.text);
+          const range = document.createRange();
+          range.setStart(textNode, start);
+          range.setEnd(textNode, start + selectionInput.text.length);
+          const selection = window.getSelection()!;
+          selection.removeAllRanges();
+          selection.addRange(range);
+          element.dispatchEvent(
+            new MouseEvent('mouseup', { bubbles: true, ctrlKey: selectionInput.ctrlKey }),
+          );
+        },
+        { text, ctrlKey },
+      );
+      await page.getByRole('button', { name: '针对选中文字提问' }).click();
+    };
+
+    await selectForQuestion('紧致性');
+    await selectForQuestion('局部信息');
+    const firstBatch = page.getByTestId('selection-card');
+    await expect(firstBatch).toHaveCount(2);
+    await expect(firstBatch.nth(0)).toContainText('紧致性');
+    await expect(firstBatch.nth(1)).toContainText('局部信息');
+
+    await page.getByRole('textbox', { name: '问题' }).fill('比较这两段');
+    await page.getByRole('button', { name: '提问' }).click();
+
+    await selectForQuestion('全局控制', true);
+    const secondBatch = page.getByTestId('selection-card');
+    await expect(secondBatch).toHaveCount(1);
+    await expect(secondBatch).toContainText('全局控制');
+    await expect(secondBatch).not.toContainText('紧致性');
+    await expect(secondBatch).not.toContainText('局部信息');
+  });
+
   test('selects source text, follows citations, and restores the thread', async ({ page }) => {
     await page.goto('/foundation-spike');
 
@@ -23,6 +115,7 @@ test.describe('NL-270 foundation spike', () => {
       selection.addRange(range);
       element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
+    await page.getByRole('button', { name: '针对选中文字提问' }).click();
 
     await expect(page.getByText('当前锚点 · 2 块')).toBeVisible();
     await expect(page.getByTestId('active-quote')).toContainText('紧致性把局部信息提升为全局控制');
@@ -99,6 +192,7 @@ test.describe('NL-270 foundation spike', () => {
       selection.addRange(range);
       element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
+    await page.getByRole('button', { name: '针对选中文字提问' }).click();
     await page.getByRole('textbox', { name: '问题' }).fill('这段在说什么？');
     await page.getByRole('button', { name: '提问' }).click();
     await page.getByRole('button', { name: '收起批注栏' }).click();
@@ -116,7 +210,7 @@ test.describe('NL-270 foundation spike', () => {
   }) => {
     await page.goto('/foundation-spike');
     const sourceBlock = page.getByTestId('source-block-block-02');
-    const selectText = async (text: string) => {
+    const selectText = async (text: string, action: 'question' | 'attachment' = 'question') => {
       await sourceBlock.evaluate((element, value) => {
         const textNode = element.querySelector('[data-source-text]')!.querySelector('p')!
           .firstChild!;
@@ -129,6 +223,11 @@ test.describe('NL-270 foundation spike', () => {
         selection.addRange(range);
         element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
       }, text);
+      await page
+        .getByRole('button', {
+          name: action === 'question' ? '针对选中文字提问' : '将选中文字作为附件',
+        })
+        .click();
     };
 
     await selectText('紧致性');
@@ -146,8 +245,7 @@ test.describe('NL-270 foundation spike', () => {
 
     await page.getByRole('button', { name: '关闭批注列表' }).click();
     for (const text of ['紧致性', '局部信息', '全局控制']) {
-      await page.getByRole('button', { name: '将选中文本作为问题附件' }).click();
-      await selectText(text);
+      await selectText(text, 'attachment');
     }
     const attachments = page.getByTestId('question-attachments-list');
     await expect(attachments).toHaveCSS('overflow-y', 'auto');
@@ -175,6 +273,7 @@ test.describe('NL-270 foundation spike', () => {
       selection.addRange(range);
       element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
+    await page.getByRole('button', { name: '针对选中文字提问' }).click();
     await page.getByRole('textbox', { name: '问题' }).fill('窄屏批注');
     await page.getByRole('button', { name: '提问' }).click();
 
@@ -258,6 +357,7 @@ test.describe('NL-270 foundation spike', () => {
       selection.addRange(range);
       element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
+    await page.getByRole('button', { name: '针对选中文字提问' }).click();
     await page.getByRole('textbox', { name: '问题' }).fill('解释粗体');
     await page.getByRole('button', { name: '提问' }).click();
     expect(await paragraph.evaluate((element) => element.innerHTML)).toBe(htmlBefore);

@@ -35,6 +35,7 @@ import type { ReadingContextSnapshot } from '@/services/reedy/tools/builtins/typ
 import { Button } from '@/components/ui/button';
 import { Loader2Icon, BookOpenIcon } from 'lucide-react';
 import { Thread } from '@/components/assistant/Thread';
+import { SelectionDrafts } from '@/components/assistant/SelectionDrafts';
 
 // Helper function to convert AIMessage array to ExportedMessageRepository format
 // Each message needs to be wrapped with { message, parentId } structure
@@ -390,8 +391,14 @@ const LegacyAIAssistant = ({ bookKey }: AIAssistantProps) => {
 
   if (!aiSettings?.enabled) {
     return (
-      <div className='flex h-full items-center justify-center p-4'>
-        <p className='text-muted-foreground text-sm'>{_('Enable AI in Settings')}</p>
+      <div className='flex h-full min-h-0 flex-col'>
+        <SelectionDrafts />
+        <div className='flex min-h-0 flex-1 flex-col items-center justify-center gap-1 p-4 text-center'>
+          <p className='text-base-content text-sm font-medium'>{_('Enable AI in Settings')}</p>
+          <p className='text-base-content/60 text-xs'>
+            {_('The selected text is saved as a draft and will not be sent automatically.')}
+          </p>
+        </div>
       </div>
     );
   }

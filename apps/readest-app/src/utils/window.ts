@@ -1,4 +1,5 @@
 import { getAllWindows, getCurrentWindow } from '@tauri-apps/api/window';
+import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi';
 import { invoke } from '@tauri-apps/api/core';
 import { emitTo, TauriEvent } from '@tauri-apps/api/event';
 import { exit } from '@tauri-apps/plugin-process';
@@ -126,6 +127,10 @@ export const tauriHandleOnCloseWindow = async (callback: () => void) => {
 // Whether the window was maximized when it last entered fullscreen, so the
 // maximized state survives a fullscreen round-trip on Windows.
 let wasMaximizedBeforeFullscreen = false;
+let boundsBeforeFullscreen: {
+  size: { width: number; height: number };
+  position: { x: number; y: number };
+} | null = null;
 
 export const tauriHandleToggleFullScreen = async () => {
   // Reader/library shortcuts also run on mobile, where Tauri does not
@@ -144,6 +149,11 @@ export const tauriHandleToggleFullScreen = async () => {
     if (wasMaximizedBeforeFullscreen) {
       wasMaximizedBeforeFullscreen = false;
       await currentWindow.maximize();
+    } else if (platform === 'windows' && boundsBeforeFullscreen) {
+      const { size, position } = boundsBeforeFullscreen;
+      boundsBeforeFullscreen = null;
+      await currentWindow.setSize(new LogicalSize(size.width, size.height));
+      await currentWindow.setPosition(new LogicalPosition(position.x, position.y));
     }
   } else {
     // On Windows, tao keeps the WS_MAXIMIZE style when a maximized window
@@ -154,7 +164,26 @@ export const tauriHandleToggleFullScreen = async () => {
     // state (Phosh windows are always maximized).
     wasMaximizedBeforeFullscreen = platform === 'windows' && (await currentWindow.isMaximized());
     if (wasMaximizedBeforeFullscreen) {
+      boundsBeforeFullscreen = null;
       await currentWindow.unmaximize();
+    } else if (platform === 'windows') {
+      const factor = await currentWindow.scaleFactor();
+      const [physicalSize, physicalPosition] = await Promise.all([
+        currentWindow.innerSize(),
+        currentWindow.outerPosition(),
+      ]);
+      boundsBeforeFullscreen = {
+        size: {
+          width: Math.round(physicalSize.width / factor),
+          height: Math.round(physicalSize.height / factor),
+        },
+        position: {
+          x: Math.round(physicalPosition.x / factor),
+          y: Math.round(physicalPosition.y / factor),
+        },
+      };
+    } else {
+      boundsBeforeFullscreen = null;
     }
     await currentWindow.setFullscreen(true);
   }

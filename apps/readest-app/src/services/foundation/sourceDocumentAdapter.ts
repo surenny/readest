@@ -146,7 +146,29 @@ const sourceTextForBlock = (type: SourceDocBlockType, text: string): string => {
   return text;
 };
 
+const markdownTableForElement = (element: Element): string => {
+  const rows = Array.from(element.querySelectorAll('tr'))
+    .map((row) =>
+      Array.from(row.querySelectorAll(':scope > th, :scope > td')).map((cell) =>
+        (cell.textContent ?? '')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .replace(/\\/g, '\\\\')
+          .replace(/\|/g, '\\|'),
+      ),
+    )
+    .filter((row) => row.length > 0);
+  if (rows.length === 0) return '';
+  const columnCount = Math.max(...rows.map((row) => row.length));
+  const line = (row: string[]) =>
+    `| ${Array.from({ length: columnCount }, (_, index) => row[index] ?? '').join(' | ')} |`;
+  return [line(rows[0]!), line(Array.from({ length: columnCount }, () => '---'))]
+    .concat(rows.slice(1).map(line))
+    .join('\n');
+};
+
 const markdownForElement = (element: Element, type: SourceDocBlockType, text: string): string => {
+  if (element.matches('table')) return markdownTableForElement(element);
   if (element.matches('img')) {
     const source = element.getAttribute('src') ?? '';
     return source ? `![${text.replace(/[\[\]]/g, '')}](${source})` : text;

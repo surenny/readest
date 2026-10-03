@@ -939,9 +939,7 @@ const FoliateViewer: React.FC<{
   // reader closes.
   useEffect(() => {
     if (!appService?.isIOSApp) return;
-    const suppressed =
-      !!viewSettings?.enableAnnotationQuickActions &&
-      viewSettings?.annotationQuickAction === 'highlight';
+    const suppressed = false;
     setSelectionSuppressed({ target: 'gesture', suppressed }).catch(() => {});
     return () => {
       if (suppressed) {
@@ -949,11 +947,7 @@ const FoliateViewer: React.FC<{
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    appService?.isIOSApp,
-    viewSettings?.enableAnnotationQuickActions,
-    viewSettings?.annotationQuickAction,
-  ]);
+  }, [appService?.isIOSApp]);
 
   // Android (#5427): useTextSelector keeps the system selection toolbar
   // natively suppressed while reader text is selected. If the reader closes

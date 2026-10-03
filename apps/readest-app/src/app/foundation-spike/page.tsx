@@ -75,6 +75,18 @@ interface WindowDimensions {
   height: number;
 }
 
+interface WindowPosition {
+  x: number;
+  y: number;
+}
+
+interface PendingSelection {
+  anchor: SourceDocAnchor;
+  text: string;
+  x: number;
+  y: number;
+}
+
 export function restoredWindowSize(
   savedSize: WindowDimensions | null,
   workArea: WindowDimensions | null,
@@ -132,11 +144,9 @@ export default function FoundationSpike() {
   const [question, setQuestion] = useState('');
   const [highlightedCitation, setHighlightedCitation] = useState<SourceDocCitation | null>(null);
   const [selectionError, setSelectionError] = useState('');
-  const [, setSelectionPreview] = useState('');
-  const [, setSelectionAttachments] = useState<string[]>([]);
   const [questionAttachments, setQuestionAttachments] = useState<string[]>([]);
   const [selectedAnchors, setSelectedAnchors] = useState<SourceDocAnchor[]>([]);
-  const [attachSelection, setAttachSelection] = useState(false);
+  const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
   const [annotationPickerBlockId, setAnnotationPickerBlockId] = useState<string | null>(null);
   const [previewedThreadId, setPreviewedThreadId] = useState<string | null>(null);
   const [windowFullscreen, setWindowFullscreen] = useState(false);
@@ -177,7 +187,10 @@ export default function FoundationSpike() {
     null,
   );
   const sourcePointerStart = useRef<{ x: number; y: number } | null>(null);
-  const normalWindowSize = useRef<{ width: number; height: number } | null>(null);
+  const normalWindowBounds = useRef<{
+    size: WindowDimensions;
+    position: WindowPosition;
+  } | null>(null);
   const toolbarExpanded = readingSettings.toolbarPinned || toolbarHovered;
   const store = useMemo(
     () =>
@@ -207,10 +220,6 @@ export default function FoundationSpike() {
     setActiveThreadId(restored?.id ?? null);
     setAnchor(restored?.unanchored ? null : (restored?.anchor ?? null));
     setSelectedAnchors(restored?.unanchored ? [] : (restored?.anchors ?? []));
-    setSelectionPreview(restored?.unanchored ? '' : (restored?.anchor?.exactQuote ?? ''));
-    setSelectionAttachments(
-      restored?.unanchored || !restored?.anchor ? [] : [restored.anchor.exactQuote],
-    );
     try {
       const savedSettings = window.localStorage.getItem(READING_SETTINGS_KEY);
       if (savedSettings) {
@@ -220,6 +229,25 @@ export default function FoundationSpike() {
       window.localStorage.removeItem(READING_SETTINGS_KEY);
     }
   }, [store]);
+
+  useEffect(() => {
+    if (!isTauriAppPlatform()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const syncFullscreenState = async () => {
+      const { getCurrentWindow } = await import('@tauri-apps/api/window');
+      const currentWindow = getCurrentWindow();
+      if (!disposed) setWindowFullscreen(await currentWindow.isFullscreen());
+      unlisten = await currentWindow.onResized(async () => {
+        if (!disposed) setWindowFullscreen(await currentWindow.isFullscreen());
+      });
+    };
+    void syncFullscreenState();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     if (!appService || !store || !libraryBookId) return;
@@ -401,7 +429,7 @@ export default function FoundationSpike() {
     }
   }
 
-  const captureSelection = (event: ReactMouseEvent<HTMLElement>) => {
+  const captureSelection = () => {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
     const range = selection.getRangeAt(0);
@@ -446,24 +474,68 @@ export default function FoundationSpike() {
           : (endText.textContent?.length ?? 0),
       );
       const nextText = selection.toString().trim();
-      if (attachSelection) {
-        if (nextText) setQuestionAttachments((current) => [...current, nextText]);
-        setAttachSelection(false);
-        setSelectionError('');
-        return;
-      }
-      setAnchor(nextAnchor);
-      setSelectedAnchors((current) => (event.ctrlKey ? [...current, nextAnchor] : [nextAnchor]));
-      setSelectionAttachments((current) =>
-        event.ctrlKey && current.length > 0 ? [...current, nextText] : [nextText],
+      if (!nextText) return;
+      const selectionRect =
+        typeof range.getBoundingClientRect === 'function'
+          ? range.getBoundingClientRect()
+          : startText.getBoundingClientRect();
+      const menuWidth = 190;
+      const menuHeight = 44;
+      const x = Math.max(
+        menuWidth / 2 + 12,
+        Math.min(
+          window.innerWidth - menuWidth / 2 - 12,
+          selectionRect.left + selectionRect.width / 2,
+        ),
       );
-      setSelectionPreview(nextText);
-      setActiveThreadId(null);
+      const preferredY =
+        selectionRect.top >= menuHeight + 16
+          ? selectionRect.top - menuHeight - 8
+          : selectionRect.bottom + 8;
+      const y = Math.max(12, Math.min(window.innerHeight - menuHeight - 12, preferredY));
+      setPendingSelection({ anchor: nextAnchor, text: nextText, x, y });
       setSelectionError('');
     } catch {
       setSelectionError('选区无法建立锚点，请从前向后选择连续正文。');
     }
   };
+
+  const useSelectionForQuestion = () => {
+    if (!pendingSelection) return;
+    setAnchor(pendingSelection.anchor);
+    setSelectedAnchors((current) =>
+      current.some(
+        (item) =>
+          item.blockId === pendingSelection.anchor.blockId &&
+          item.startOffset === pendingSelection.anchor.startOffset &&
+          item.endBlockId === pendingSelection.anchor.endBlockId &&
+          item.endOffset === pendingSelection.anchor.endOffset,
+      )
+        ? current
+        : [...current, pendingSelection.anchor],
+    );
+    setActiveThreadId(null);
+    setPendingSelection(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  const useSelectionAsAttachment = () => {
+    if (!pendingSelection) return;
+    setQuestionAttachments((current) => [...current, pendingSelection.text]);
+    setPendingSelection(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  useEffect(() => {
+    if (!pendingSelection) return;
+    const dismissPendingSelection = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (target?.closest('[data-selection-action-menu]')) return;
+      setPendingSelection(null);
+    };
+    document.addEventListener('pointerdown', dismissPendingSelection);
+    return () => document.removeEventListener('pointerdown', dismissPendingSelection);
+  }, [pendingSelection]);
 
   const ask = () => {
     if (!store || !question.trim()) return;
@@ -477,6 +549,7 @@ export default function FoundationSpike() {
     );
     setQuestion('');
     setQuestionAttachments([]);
+    setSelectedAnchors([]);
     refreshThreads(updated.id);
     requestAnimationFrame(() => {
       const conversation = conversationScrollRef.current;
@@ -488,8 +561,6 @@ export default function FoundationSpike() {
     setActiveThreadId(thread.id);
     setAnchor(thread.unanchored ? null : thread.anchor);
     setSelectedAnchors(thread.unanchored ? [] : thread.anchors);
-    setSelectionPreview(thread.unanchored ? '' : thread.anchor.exactQuote);
-    setSelectionAttachments(thread.unanchored ? [] : [thread.anchor.exactQuote]);
     setAnnotationPickerBlockId(null);
     setSidebarOpen(true);
     setAnnotationManagerOpen(false);
@@ -547,9 +618,8 @@ export default function FoundationSpike() {
 
   const clearSelection = () => {
     setAnchor(null);
-    setSelectionPreview('');
-    setSelectionAttachments([]);
     setSelectedAnchors([]);
+    setPendingSelection(null);
     setActiveThreadId(null);
     setSelectionError('');
     setAnnotationPickerBlockId(null);
@@ -625,7 +695,7 @@ export default function FoundationSpike() {
   const toggleFullscreen = async () => {
     try {
       if (isTauriAppPlatform()) {
-        const { currentMonitor, getCurrentWindow, LogicalSize } = await import(
+        const { currentMonitor, getCurrentWindow, LogicalPosition, LogicalSize } = await import(
           '@tauri-apps/api/window'
         );
         const currentWindow = getCurrentWindow();
@@ -635,24 +705,39 @@ export default function FoundationSpike() {
           await currentWindow.unmaximize();
           const monitor = await currentMonitor();
           const workArea = monitor?.workArea.size.toLogical(monitor.scaleFactor);
-          const size = restoredWindowSize(normalWindowSize.current, workArea ?? null);
+          const size = restoredWindowSize(
+            normalWindowBounds.current?.size ?? null,
+            workArea ?? null,
+          );
           await currentWindow.setSize(new LogicalSize(size.width, size.height));
-          await currentWindow.center();
+          const position = normalWindowBounds.current?.position;
+          if (position) {
+            await currentWindow.setPosition(new LogicalPosition(position.x, position.y));
+          } else {
+            await currentWindow.center();
+          }
         } else {
           const maximized = await currentWindow.isMaximized();
           if (maximized) {
-            normalWindowSize.current = null;
+            normalWindowBounds.current = null;
             await currentWindow.unmaximize();
           } else {
             const factor = await currentWindow.scaleFactor();
             const currentSize = await currentWindow.innerSize();
-            normalWindowSize.current = {
-              width: Math.round(currentSize.width / factor),
-              height: Math.round(currentSize.height / factor),
+            const currentPosition = await currentWindow.outerPosition();
+            normalWindowBounds.current = {
+              size: {
+                width: Math.round(currentSize.width / factor),
+                height: Math.round(currentSize.height / factor),
+              },
+              position: {
+                x: Math.round(currentPosition.x / factor),
+                y: Math.round(currentPosition.y / factor),
+              },
             };
           }
-          await currentWindow.setFullscreen(true);
           setWindowFullscreen(true);
+          await currentWindow.setFullscreen(true);
         }
         return;
       }
@@ -1084,7 +1169,7 @@ export default function FoundationSpike() {
       <header
         className='relative z-50 flex h-10 shrink-0 items-center border-b px-3'
         style={{ backgroundColor: panel, borderColor: dark ? '#374151' : '#e5e7eb' }}
-        data-tauri-drag-region={!windowFullscreen}
+        {...(!windowFullscreen ? { 'data-tauri-drag-region': true } : {})}
         onMouseDown={(event) => void startWindowDragging(event)}
       >
         <div className='h-full flex-1' aria-label='窗口拖动区域' />
@@ -1134,25 +1219,27 @@ export default function FoundationSpike() {
                 className='flex h-8 items-center justify-center px-3 text-[11px]'
                 style={{ color: muted }}
               >
-                {libraryBook && documentModel.sections.length > 0 ? (
-                  <button
-                    type='button'
-                    className='pointer-events-auto rounded px-3 py-1 font-semibold hover:bg-black/5'
-                    aria-label='打开导航目录'
-                    aria-expanded={navigationOpen}
-                    onClick={() => setNavigationOpen((value) => !value)}
-                  >
-                    ☰ 目录
-                  </button>
-                ) : (
-                  '•••'
-                )}
+                •••
               </div>
               <div
                 className={`border-t px-3 pb-3 pt-2 ${toolbarExpanded ? 'block' : 'hidden'}`}
                 style={{ borderColor: dark ? '#4b5563' : '#e5e7eb' }}
               >
-                <div className='flex flex-wrap items-center gap-1.5'>
+                <div
+                  className='flex flex-wrap items-center gap-1.5'
+                  data-testid='reading-toolbar-actions'
+                >
+                  {libraryBook && documentModel.sections.length > 0 ? (
+                    <button
+                      type='button'
+                      className='btn btn-ghost btn-sm'
+                      aria-label='打开导航目录'
+                      aria-expanded={navigationOpen}
+                      onClick={() => setNavigationOpen((value) => !value)}
+                    >
+                      ☰ 目录
+                    </button>
+                  ) : null}
                   {!libraryBookId ? (
                     <label className='btn btn-ghost btn-sm cursor-pointer' title='导入 Markdown'>
                       ＋ 导入
@@ -1450,9 +1537,8 @@ export default function FoundationSpike() {
           <div
             className='foundation-gutter px-5 pb-24 pt-14 sm:px-10'
             data-testid='reader-gutter'
-            title='点击正文外灰色区域取消选中'
             onClick={(event) => {
-              if (event.target === event.currentTarget) clearSelection();
+              if (event.target === event.currentTarget) setPendingSelection(null);
             }}
           >
             <article
@@ -1710,7 +1796,6 @@ export default function FoundationSpike() {
                                 );
                                 setSelectedAnchors(next);
                                 setAnchor(next.at(-1) ?? null);
-                                setSelectionPreview(next.at(-1)?.exactQuote ?? '');
                               }}
                             >
                               ×
@@ -1730,7 +1815,7 @@ export default function FoundationSpike() {
                     <p className='mt-1 max-w-56 text-xs leading-5' style={{ color: muted }}>
                       {anchor
                         ? '发送后会创建批注，并生成本地固定示例回答。'
-                        : '点击正文外灰色夹缝可取消选中；无锚点会话可从批注管理筛选。'}
+                        : '选择原文后，请在选区旁选择“提问”或“作为附件”。'}
                     </p>
                   </div>
                 )}
@@ -1745,15 +1830,6 @@ export default function FoundationSpike() {
                 className='border-t p-3'
                 style={{ borderColor: dark ? '#374151' : '#e5e7eb' }}
               >
-                <button
-                  type='button'
-                  className={`mb-2 text-xs ${attachSelection ? 'text-blue-600' : ''}`}
-                  aria-pressed={attachSelection}
-                  aria-label='将选中文本作为问题附件'
-                  onClick={() => setAttachSelection((value) => !value)}
-                >
-                  ⎘ {attachSelection ? '请选择要附加的文本…' : '附加选中文本'}
-                </button>
                 {questionAttachments.length > 0 ? (
                   <div
                     data-testid='question-attachments-list'
@@ -2010,6 +2086,44 @@ export default function FoundationSpike() {
             {attachmentDialog.content}
           </div>
         </section>
+      ) : null}
+      {pendingSelection ? (
+        <div
+          data-selection-action-menu
+          data-testid='selection-action-menu'
+          role='toolbar'
+          aria-label='选中文字操作'
+          className='eink-bordered fixed z-[70] flex h-11 -translate-x-1/2 items-center gap-1 rounded-xl border p-1 shadow-xl'
+          style={{
+            left: pendingSelection.x,
+            top: pendingSelection.y,
+            color: foreground,
+            backgroundColor: panel,
+            borderColor: dark ? '#4b5563' : '#d1d5db',
+          }}
+        >
+          <button
+            type='button'
+            aria-label='针对选中文字提问'
+            className='h-9 rounded-lg px-3 text-xs font-semibold hover:bg-black/5'
+            onClick={useSelectionForQuestion}
+          >
+            ◌ 提问
+          </button>
+          <span
+            className='h-5 w-px'
+            style={{ backgroundColor: dark ? '#4b5563' : '#e5e7eb' }}
+            aria-hidden='true'
+          />
+          <button
+            type='button'
+            aria-label='将选中文字作为附件'
+            className='h-9 rounded-lg px-3 text-xs font-semibold hover:bg-black/5'
+            onClick={useSelectionAsAttachment}
+          >
+            ⎘ 作为附件
+          </button>
+        </div>
       ) : null}
     </main>
   );

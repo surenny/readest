@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { RiDeleteBinLine } from 'react-icons/ri';
+import { MessageCircleQuestionIcon, PaperclipIcon } from 'lucide-react';
 
 import * as CFI from 'foliate-js/epubcfi.js';
 import { useEnv } from '@/context/EnvContext';
@@ -46,16 +47,9 @@ import {
 import { eventDispatcher } from '@/utils/event';
 import { findTocItemBS } from '@/services/nav';
 import { throttle } from '@/utils/throttle';
-import {
-  beginGesture,
-  createDeferredActionState,
-  flushDeferredAction,
-  isLongPressHold,
-  runOrDeferAction,
-} from '../../utils/deferredAction';
 import { Insets } from '@/types/misc';
 import { runSimpleCC } from '@/utils/simplecc';
-import { getWordCount, isSingleLookupTerm } from '@/utils/word';
+import { getWordCount } from '@/utils/word';
 import { getIndexFromCfi } from '@/utils/cfi';
 import { writeTextToClipboard } from '@/utils/clipboard';
 import { buildAnnotationUrl } from '@/utils/deeplink';
@@ -89,6 +83,7 @@ import AnnotationRangeEditor from './AnnotationRangeEditor';
 import PageTurnHint from './PageTurnHint';
 import SelectionRangeEditor from './SelectionRangeEditor';
 import AnnotationPopup from './AnnotationPopup';
+import SelectionActionPopup from './SelectionActionPopup';
 import DictionaryPopup from './DictionaryPopup';
 import DictionarySheet from './DictionarySheet';
 import NoteEditorSheet from './NoteEditorSheet';
@@ -138,7 +133,8 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   const getView = useReaderStore((s) => s.getView);
   const getViewsById = useReaderStore((s) => s.getViewsById);
   const getViewSettings = useReaderStore((s) => s.getViewSettings);
-  const { setNotebookVisible, setNotebookActiveTab } = useNotebookStore();
+  const { setNotebookVisible, setNotebookActiveTab, addAIQuestionAnchor, addAIDraftAttachment } =
+    useNotebookStore();
   const { clearBooknotesNav, isSideBarVisible } = useSidebarStore();
   const { listenToNativeTouchEvents } = useDeviceControlStore();
   const { loadCustomDictionaries } = useCustomDictionaryStore();
@@ -174,6 +170,7 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   const [selection, setSelection] = useState<TextSelection | null>(null);
+  const [selectionBatch, setSelectionBatch] = useState<TextSelection[]>([]);
   const [translationEpoch, setTranslationEpoch] = useState(0);
   const [showAnnotPopup, setShowAnnotPopup] = useState(false);
   const [showDictionaryPopup, setShowDictionaryPopup] = useState(false);
@@ -212,18 +209,7 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   const [selectedColor, setSelectedColor] = useState<HighlightColor>(
     settings.globalReadSettings.highlightStyles[selectedStyle],
   );
-  const androidTouchEndRef = useRef(false);
-  // Holds a quick action that fired while the user is still touching the screen
-  // (Android long-press selects text via selectionchange before touchend). The
-  // pending action runs on touchend so popups don't open under an active touch.
-  const deferredQuickActionRef = useRef(createDeferredActionState());
-  // Timestamp of the latest touch pointerdown (0 for mouse). Used to require a
-  // long-press hold before the instant quick action fires, so a tap-to-deselect
-  // can't re-open the dictionary off a racy lingering selectionchange (iOS).
-  const pointerDownTimeRef = useRef(0);
-  // Set while an instant-quick-action dictionary lookup is up, because that
-  // path consumes the selection as it opens (see handleQuickAction). Dismissing
-  // the lookup hands the selection back (#6213).
+  // Set while a Word Lens lookup is up; dismissing it hands the selection back.
   const instantLookupDeselectedRef = useRef(false);
   // Set when a Word Lens gloss tap synthesizes a selection so the
   // selection-change effect opens the dictionary popup instead of the
@@ -255,10 +241,14 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   const annotPopupMaxWidth = Math.min(useResponsiveSize(300), maxWidth);
   const annotPopupToolSize = useResponsiveSize(44);
   const toolbarToolTypes = getToolbarToolTypes(viewSettings.annotationToolbarItems, canShare);
+  const showSelectionActions = !!selection && !selection.annotated;
   const highlightOptionsAvailable = shouldShowHighlightOptions(toolbarToolTypes, selection ?? null);
   const annotPopupWidth = highlightOptionsAvailable
     ? annotPopupMaxWidth
-    : Math.min(Math.max(toolbarToolTypes.length, 1) * annotPopupToolSize, annotPopupMaxWidth);
+    : Math.min(
+        Math.max(showSelectionActions ? 2 : toolbarToolTypes.length, 1) * annotPopupToolSize,
+        annotPopupMaxWidth,
+      );
   const annotPopupHeight = useResponsiveSize(44);
   const androidSelectionHandlerHeight = 0;
 
@@ -352,6 +342,7 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
       setShowProofreadPopup(false);
       setEditingAnnotation(null);
       setNoteEditorTarget(null);
+      setSelectionBatch([]);
     }, 500),
     [],
   );
@@ -536,27 +527,15 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
     if (!appService?.isIOSApp && !appService?.isAndroidApp) {
       detail.doc?.addEventListener('touchcancel', handleTouchCancel);
     }
-    // Re-arm the instant quick action at the start of each gesture. Android does
-    // this via the native-touch touchstart above; iOS/desktop have no such path,
-    // and a single iOS long-press emits multiple selectionchange events for the
-    // same word — without re-arming, the system-dictionary sheet stacked twice
-    // (the action fired once per event instead of once per gesture).
-    if (!appService?.isAndroidApp) {
-      detail.doc?.addEventListener(
-        'pointerdown',
-        (ev: Event) => {
-          beginGesture(deferredQuickActionRef.current);
-          // Remember when the gesture started so the instant quick action can
-          // require a long-press hold (touch only — mouse selections fire on
-          // pointerup and shouldn't be time-gated).
-          pointerDownTimeRef.current =
-            (ev as PointerEvent).pointerType === 'mouse' ? 0 : Date.now();
-        },
-        opts,
-      );
-    }
     detail.doc?.addEventListener('mousedown', handleMouseDown);
-    detail.doc?.addEventListener('pointerdown', handlePointerDown.bind(null, doc, index), opts);
+    detail.doc?.addEventListener(
+      'pointerdown',
+      (pointerEvent: PointerEvent) => {
+        if (pointerEvent.ctrlKey || pointerEvent.metaKey) setShowAnnotPopup(false);
+        handlePointerDown(doc, index, pointerEvent);
+      },
+      opts,
+    );
     detail.doc?.addEventListener('pointermove', handlePointerMove.bind(null, doc, index), opts);
     detail.doc?.addEventListener('pointercancel', handlePointerCancel.bind(null, doc, index));
     detail.doc?.addEventListener('pointerup', handlePointerUp.bind(null, doc, index));
@@ -738,16 +717,12 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
     }
     if (!doc || index === undefined) return;
     if (ev.type === 'touchstart') {
-      androidTouchEndRef.current = false;
-      beginGesture(deferredQuickActionRef.current);
       handleTouchStart();
     } else if (ev.type === 'touchmove') {
       handleNativeTouchMove(ev.x, ev.y, doc);
     } else if (ev.type === 'touchend') {
-      androidTouchEndRef.current = true;
       handleTouchEnd();
       handlePointerUp(doc, index);
-      flushDeferredAction(deferredQuickActionRef.current);
     }
   };
 
@@ -777,10 +752,6 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
       const doc = content?.doc;
       const index = content?.index;
       if (!doc || index === undefined) return;
-      // A double-click is a deliberate act-on-word gesture, so let the quick
-      // action fire without the touch long-press hold gate (matching a mouse
-      // selection, which sets this to 0 on pointerdown).
-      pointerDownTimeRef.current = 0;
       void handleDoubleClick(doc, index, data.clientX, data.clientY);
     };
     window.addEventListener('message', handleDoubleClickMessage);
@@ -1003,76 +974,85 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // A real touch selection only appears after the OS long-press (~500ms); a
-  // quick tap that re-reports a lingering selection fires far sooner.
-  const quickActionMinHoldMs = 300;
-
-  const handleQuickAction = () => {
-    // iOS/desktop immediate path: only fire from a long-press hold. Without this
-    // a tap-to-deselect after dismissing the system dictionary occasionally
-    // re-opened it off a racy lingering selectionchange. Android defers to
-    // touchend (a deliberate lift) and is left as-is.
-    if (
-      !appService?.isAndroidApp &&
-      !isLongPressHold(pointerDownTimeRef.current, Date.now(), quickActionMinHoldMs)
-    ) {
-      return;
-    }
-    const action = viewSettings.annotationQuickAction;
-    const runAction = () => {
-      switch (action) {
-        case 'copy':
-          handleCopy(false);
-          handleDismissPopupAndSelection();
-          break;
-        case 'highlight':
-          // highlight is already applied in instant annotating
-          handleDismissPopupAndSelection();
-          break;
-        case 'search':
-          handleSearch();
-          break;
-        case 'dictionary':
-          // A dictionary lookup only makes sense for a single word (or a short
-          // CJK term); on a longer selection fall back to the annotation
-          // toolbar so highlighting and copying stay reachable (#5213).
-          if (selection && isSingleLookupTerm(selection.text)) {
-            handleDictionary();
-            // Drop the selection for as long as the lookup is up, so iOS's
-            // native handles and blue highlight — painted above web content —
-            // don't sit on top of the popup (#5585). It is handed back on
-            // dismiss (#6213): keeping it dropped for good left no way to
-            // highlight or copy the word, because re-selecting it with a quick
-            // action armed only opens the dictionary again.
-            // Clear the flag before deselecting: the selectionchange this fires
-            // would otherwise dismiss the popup we just opened.
-            isTextSelected.current = false;
-            instantLookupDeselectedRef.current = true;
-            view?.deselect();
-          } else {
-            handleShowAnnotPopup();
-          }
-          break;
-        case 'translate':
-          handleTranslation();
-          break;
-        case 'tts':
-          handleSpeakText(true);
-          break;
-        case 'share':
-          handleShare();
-          break;
+  useEffect(() => {
+    const hidePopupForAdditiveSelection = (message: MessageEvent) => {
+      if (
+        message.data?.bookKey === bookKey &&
+        message.data?.type === 'iframe-keydown' &&
+        (message.data.ctrlKey || message.data.metaKey)
+      ) {
+        setShowAnnotPopup(false);
       }
     };
-    // On Android, a long-press fires selectionchange (and this handler) while
-    // the finger is still down. Defer until touchend so popups aren't dismissed
-    // by the in-progress touch (closes #3935).
-    runOrDeferAction(
-      deferredQuickActionRef.current,
-      !!appService?.isAndroidApp && !androidTouchEndRef.current,
-      runAction,
-    );
-  };
+    window.addEventListener('message', hidePopupForAdditiveSelection);
+    return () => window.removeEventListener('message', hidePopupForAdditiveSelection);
+  }, [bookKey]);
+
+  useEffect(() => {
+    if (!selection || selection.annotated || selection.popup) return;
+    const snapshot = {
+      ...selection,
+      range: selection.range.cloneRange(),
+      segments: selection.segments?.map((segment) => ({
+        ...segment,
+        range: segment.range.cloneRange(),
+      })),
+    };
+    setSelectionBatch((current) => {
+      const next = selection.additive ? [...current, snapshot] : [snapshot];
+      return next.filter(
+        (item, index, items) =>
+          items.findIndex(
+            (candidate) =>
+              candidate.index === item.index &&
+              candidate.cfi === item.cfi &&
+              candidate.text === item.text,
+          ) === index,
+      );
+    });
+  }, [selection]);
+
+  useEffect(() => {
+    const highlightName = 'readest-selection-batch';
+    const documents = new Set<Document>();
+    const rangesByDocument = new Map<Document, Range[]>();
+    for (const item of selectionBatch) {
+      const ranges = item.segments?.map((segment) => segment.range) ?? [item.range];
+      for (const range of ranges) {
+        const doc = range.startContainer.ownerDocument;
+        if (!doc) continue;
+        documents.add(doc);
+        rangesByDocument.set(doc, [...(rangesByDocument.get(doc) ?? []), range]);
+      }
+    }
+    for (const [doc, ranges] of rangesByDocument) {
+      const css = doc.defaultView?.CSS as
+        | (typeof CSS & { highlights?: Map<string, unknown> })
+        | undefined;
+      const HighlightClass = doc.defaultView?.Highlight as
+        | (new (
+            ...ranges: Range[]
+          ) => unknown)
+        | undefined;
+      if (!css?.highlights || !HighlightClass) continue;
+      let style = doc.head.querySelector<HTMLStyleElement>('style[data-readest-selection-batch]');
+      if (!style) {
+        style = doc.createElement('style');
+        style.dataset['readestSelectionBatch'] = '';
+        style.textContent = `::highlight(${highlightName}) { background: rgba(59, 130, 246, 0.32); text-decoration: underline rgba(37, 99, 235, 0.85) 2px; }`;
+        doc.head.append(style);
+      }
+      css.highlights.set(highlightName, new HighlightClass(...ranges));
+    }
+    return () => {
+      for (const doc of documents) {
+        const css = doc.defaultView?.CSS as
+          | (typeof CSS & { highlights?: Map<string, unknown> })
+          | undefined;
+        css?.highlights?.delete(highlightName);
+      }
+    };
+  }, [selectionBatch]);
 
   useEffect(() => {
     // One-tap highlighting (#5983): with the highlight tool on the toolbar the
@@ -1138,19 +1118,11 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
       // new text while one of these is up — they all sit over the page.
       if (showDictionaryPopup || showDeepLPopup || showProofreadPopup) return;
 
-      const { enableAnnotationQuickActions, annotationQuickAction } = viewSettings;
       if (wantWordLensDict) {
         // Route through handleDictionary so a Word Lens gloss tap honours the
         // dictionary settings (system dictionary vs the in-app popup) — same
         // as the selection-toolbar and instant-quick-action dictionary paths.
         handleDictionary();
-      } else if (
-        enableAnnotationQuickActions &&
-        annotationQuickAction &&
-        isTextSelected.current &&
-        !selection.quickActionHandled
-      ) {
-        handleQuickAction();
       } else {
         handleShowAnnotPopup();
       }
@@ -2329,6 +2301,51 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
   // synthesized text with no real text node in the book) can't anchor
   // anything; and TTS always needs a range in a main view document.
   const popupSelectionNoCfi = !!selection?.popup && !selection?.cfi;
+  const getSelectionContext = (selected: TextSelection) => {
+    const cfi =
+      selected.cfi || (selected.popup ? undefined : view?.getCFI(selected.index, selected.range));
+    return {
+      id: `${bookKey}:${cfi ?? `${selected.index}:${selected.text}`}`,
+      bookKey,
+      text: selected.text,
+      page: selected.page,
+      index: selected.index,
+      cfi,
+      href: selected.href,
+    };
+  };
+  const openAISelectionDraft = () => {
+    setNotebookActiveTab('ai');
+    setNotebookVisible(true);
+    setSelectionBatch([]);
+    handleDismissPopupAndSelection();
+  };
+  const selectionActionButtons = selection
+    ? [
+        {
+          action: 'ask' as const,
+          label: _('Ask'),
+          Icon: MessageCircleQuestionIcon,
+          onClick: () => {
+            for (const selected of selectionBatch.length > 0 ? selectionBatch : [selection]) {
+              addAIQuestionAnchor(getSelectionContext(selected));
+            }
+            openAISelectionDraft();
+          },
+        },
+        {
+          action: 'attach' as const,
+          label: _('Attach'),
+          Icon: PaperclipIcon,
+          onClick: () => {
+            for (const selected of selectionBatch.length > 0 ? selectionBatch : [selection]) {
+              addAIDraftAttachment(getSelectionContext(selected));
+            }
+            openAISelectionDraft();
+          },
+        },
+      ]
+    : [];
   const buildToolButton = (type: AnnotationToolType) => {
     const def = annotationToolButtons.find((button) => button.type === type);
     if (!def) return null;
@@ -2498,6 +2515,22 @@ const Annotator: React.FC<{ bookKey: string; contentInsets: Insets }> = ({
         />
       )}
       {showAnnotPopup &&
+        showSelectionActions &&
+        !noteEditorInSheet &&
+        trianglePosition &&
+        annotPopupPosition && (
+          <SelectionActionPopup
+            actions={selectionActionButtons}
+            position={annotPopupPosition}
+            trianglePosition={trianglePosition}
+            isVertical={viewSettings.vertical}
+            width={annotPopupWidth}
+            height={annotPopupHeight}
+            onDismiss={handleDismissPopupAndSelection}
+          />
+        )}
+      {showAnnotPopup &&
+        !showSelectionActions &&
         !noteEditorInSheet &&
         trianglePosition &&
         annotPopupPosition &&

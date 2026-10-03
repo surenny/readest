@@ -59,6 +59,9 @@ export interface TextSelection {
   // section document; tools that need a live main-document range or that
   // cannot work without a CFI must be disabled accordingly.
   popup?: boolean;
+  // The selection was completed while Ctrl/Cmd was held. Consumers that
+  // support multi-select may append it to the current selection batch.
+  additive?: boolean;
 }
 
 const frameRect = (frame: Frame, rect?: Rect, sx = 1, sy = 1) => {

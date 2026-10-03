@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, type FC } from 'react';
+import { useEffect, useRef, type FC, type FormEvent } from 'react';
 import {
   ActionBarPrimitive,
   AssistantIf,
@@ -9,6 +9,7 @@ import {
   MessagePrimitive,
   ThreadPrimitive,
   useAssistantState,
+  useComposerRuntime,
   useThreadViewport,
   useThread,
 } from '@assistant-ui/react';
@@ -35,6 +36,9 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/utils/tailwind';
 import type { SourceItem } from '@/services/ai/adapters/reedySourceStore';
+import { useNotebookStore } from '@/store/notebookStore';
+import { buildSelectionDraftMessage } from './selectionDraft';
+import { SelectionDrafts } from './SelectionDrafts';
 
 interface ThreadProps {
   sources?: SourceItem[];
@@ -226,14 +230,36 @@ interface ComposerProps {
 const Composer: FC<ComposerProps> = ({ onClear, onResetIndex }) => {
   const isEmpty = useAssistantState((s) => s.composer.isEmpty);
   const isRunning = useAssistantState((s) => s.thread.isRunning);
+  const composerRuntime = useComposerRuntime();
+  const { aiQuestionAnchors, aiDraftAttachments, clearAISelectionDraft } = useNotebookStore();
+  const contexts = [
+    ...aiQuestionAnchors,
+    ...aiDraftAttachments.filter(
+      (item) => !aiQuestionAnchors.some((anchor) => anchor.id === item.id),
+    ),
+  ];
+  const sendSelectionDraft = () => {
+    if (contexts.length === 0 || isEmpty || isRunning) return;
+    const question = composerRuntime.getState().text.trim();
+    composerRuntime.setText(buildSelectionDraftMessage(question, contexts));
+    composerRuntime.send();
+    clearAISelectionDraft();
+  };
+  const handleSubmit = (event: FormEvent) => {
+    if (contexts.length === 0 || isEmpty || isRunning) return;
+    event.preventDefault();
+    sendSelectionDraft();
+  };
 
   return (
     <ComposerPrimitive.Root
       className='group/composer animate-in fade-in slide-in-from-bottom-2 mx-auto mb-2 w-full duration-300'
       data-empty={isEmpty}
       data-running={isRunning}
+      onSubmit={handleSubmit}
     >
       <div className='bg-base-200 ring-base-content/10 focus-within:ring-base-content/20 overflow-hidden rounded-2xl shadow-xs ring-1 ring-inset transition-all duration-200'>
+        <SelectionDrafts />
         <div className='flex items-end gap-0.5 p-1.5'>
           {onClear && (
             <button
@@ -260,14 +286,27 @@ const Composer: FC<ComposerProps> = ({ onClear, onResetIndex }) => {
 
           <ComposerPrimitive.Input
             placeholder='Ask about this book...'
+            autoFocus={aiQuestionAnchors.length > 0}
             rows={1}
             className='text-base-content placeholder:text-base-content/40 my-1 h-5 max-h-[200px] min-w-0 flex-1 resize-none bg-transparent text-sm leading-5 outline-hidden'
           />
 
           <div className='bg-base-content text-base-100 relative mb-0.5 size-7 shrink-0 rounded-full'>
-            <ComposerPrimitive.Send className='absolute inset-0 flex items-center justify-center transition-all duration-300 ease-out group-data-[empty=true]/composer:scale-0 group-data-[running=true]/composer:scale-0 group-data-[empty=true]/composer:opacity-0 group-data-[running=true]/composer:opacity-0'>
-              <ArrowUpIcon className='size-3.5' />
-            </ComposerPrimitive.Send>
+            {contexts.length > 0 ? (
+              <button
+                type='button'
+                onClick={sendSelectionDraft}
+                disabled={isEmpty || isRunning}
+                className='absolute inset-0 flex items-center justify-center transition-all duration-300 ease-out group-data-[empty=true]/composer:scale-0 group-data-[running=true]/composer:scale-0 group-data-[empty=true]/composer:opacity-0 group-data-[running=true]/composer:opacity-0'
+                aria-label='Send message'
+              >
+                <ArrowUpIcon className='size-3.5' />
+              </button>
+            ) : (
+              <ComposerPrimitive.Send className='absolute inset-0 flex items-center justify-center transition-all duration-300 ease-out group-data-[empty=true]/composer:scale-0 group-data-[running=true]/composer:scale-0 group-data-[empty=true]/composer:opacity-0 group-data-[running=true]/composer:opacity-0'>
+                <ArrowUpIcon className='size-3.5' />
+              </ComposerPrimitive.Send>
+            )}
 
             <ComposerPrimitive.Cancel className='absolute inset-0 flex items-center justify-center transition-all duration-300 ease-out group-data-[running=false]/composer:scale-0 group-data-[running=false]/composer:opacity-0'>
               <SquareIcon className='size-3' fill='currentColor' />

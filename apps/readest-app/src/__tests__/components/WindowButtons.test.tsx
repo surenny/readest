@@ -8,6 +8,7 @@ const startDragging = vi.fn().mockResolvedValue(undefined);
 const startPointerWindowMove = vi.fn().mockResolvedValue(undefined);
 let hasWindowBar = false;
 let pointerWindowControls = false;
+let fullscreen = false;
 
 vi.mock('@/context/EnvContext', () => ({
   useEnv: () => ({ appService: { hasWindowBar } }),
@@ -28,6 +29,7 @@ vi.mock('@/utils/windowPointerDrag', () => ({
 
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
+    isFullscreen: vi.fn().mockResolvedValue(fullscreen),
     startDragging,
     toggleMaximize: vi.fn().mockResolvedValue(undefined),
   }),
@@ -48,6 +50,7 @@ describe('WindowButtons', () => {
     cleanup();
     vi.clearAllMocks();
     hasWindowBar = false;
+    fullscreen = false;
   });
 
   it('does not register desktop title-bar gestures when the platform has no window bar', async () => {
@@ -94,6 +97,20 @@ describe('WindowButtons', () => {
     });
 
     expect(startPointerWindowMove).toHaveBeenCalledOnce();
+    expect(startDragging).not.toHaveBeenCalled();
+  });
+
+  it('does not drag a fullscreen desktop window', async () => {
+    hasWindowBar = true;
+    fullscreen = true;
+    render(<WindowButtonsHarness />);
+
+    await act(async () => {
+      fireEvent.mouseDown(screen.getByTestId('header'), { buttons: 1, detail: 1 });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(startPointerWindowMove).not.toHaveBeenCalled();
     expect(startDragging).not.toHaveBeenCalled();
   });
 });

@@ -4,6 +4,16 @@ import { TextSelection } from '@/utils/sel';
 
 export type NotebookTab = 'notes' | 'ai';
 
+export interface SelectionContext {
+  id: string;
+  bookKey: string;
+  text: string;
+  page: number;
+  index: number;
+  cfi?: string;
+  href?: string;
+}
+
 interface NotebookState {
   notebookWidth: string;
   isNotebookVisible: boolean;
@@ -17,6 +27,8 @@ interface NotebookState {
   notebookNewHighlightIds: string[];
   notebookEditAnnotation: BookNote | null;
   notebookAnnotationDrafts: { [key: string]: string };
+  aiQuestionAnchors: SelectionContext[];
+  aiDraftAttachments: SelectionContext[];
   getIsNotebookVisible: () => boolean;
   toggleNotebook: () => void;
   toggleNotebookPin: () => void;
@@ -30,6 +42,11 @@ interface NotebookState {
   setNotebookEditAnnotation: (note: BookNote | null) => void;
   saveNotebookAnnotationDraft: (key: string, note: string) => void;
   getNotebookAnnotationDraft: (key: string) => string | undefined;
+  addAIQuestionAnchor: (context: SelectionContext) => void;
+  removeAIQuestionAnchor: (id: string) => void;
+  addAIDraftAttachment: (context: SelectionContext) => void;
+  removeAIDraftAttachment: (id: string) => void;
+  clearAISelectionDraft: () => void;
 }
 
 export const useNotebookStore = create<NotebookState>((set, get) => ({
@@ -41,6 +58,8 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
   notebookNewHighlightIds: [],
   notebookEditAnnotation: null,
   notebookAnnotationDrafts: {},
+  aiQuestionAnchors: [],
+  aiDraftAttachments: [],
   getIsNotebookVisible: () => get().isNotebookVisible,
   getNotebookWidth: () => get().notebookWidth,
   setNotebookWidth: (width: string) => set({ notebookWidth: width }),
@@ -58,4 +77,25 @@ export const useNotebookStore = create<NotebookState>((set, get) => ({
       notebookAnnotationDrafts: { ...state.notebookAnnotationDrafts, [key]: note },
     })),
   getNotebookAnnotationDraft: (key: string) => get().notebookAnnotationDrafts[key],
+  addAIQuestionAnchor: (context) =>
+    set((state) => ({
+      aiQuestionAnchors: state.aiQuestionAnchors.some((item) => item.id === context.id)
+        ? state.aiQuestionAnchors
+        : [...state.aiQuestionAnchors, context],
+    })),
+  removeAIQuestionAnchor: (id) =>
+    set((state) => ({
+      aiQuestionAnchors: state.aiQuestionAnchors.filter((item) => item.id !== id),
+    })),
+  addAIDraftAttachment: (context) =>
+    set((state) => ({
+      aiDraftAttachments: state.aiDraftAttachments.some((item) => item.id === context.id)
+        ? state.aiDraftAttachments
+        : [...state.aiDraftAttachments, context],
+    })),
+  removeAIDraftAttachment: (id) =>
+    set((state) => ({
+      aiDraftAttachments: state.aiDraftAttachments.filter((item) => item.id !== id),
+    })),
+  clearAISelectionDraft: () => set({ aiQuestionAnchors: [], aiDraftAttachments: [] }),
 }));

@@ -30,6 +30,7 @@ describe('foundation spike page', () => {
     endBlockId = startBlockId,
     endText = startText,
     ctrlKey = false,
+    action: 'question' | 'attachment' | 'none' = 'question',
   ) => {
     const startElement = screen
       .getByTestId(`source-block-${startBlockId}`)
@@ -54,7 +55,64 @@ describe('foundation spike page', () => {
     window.getSelection()?.removeAllRanges();
     window.getSelection()?.addRange(range);
     fireEvent.mouseUp(startElement.closest('article')!, { ctrlKey });
+    if (action === 'question') {
+      fireEvent.click(screen.getByRole('button', { name: '针对选中文字提问' }));
+    } else if (action === 'attachment') {
+      fireEvent.click(screen.getByRole('button', { name: '将选中文字作为附件' }));
+    }
   };
+
+  it('waits for an explicit selection action and dismisses the transient menu on blank click', () => {
+    render(<FoundationSpike />);
+
+    selectText('block-02', '紧致性', 'block-02', '紧致性', false, 'none');
+
+    const menu = screen.getByRole('toolbar', { name: '选中文字操作' });
+    expect(menu).not.toBeNull();
+    expect(screen.queryByTestId('active-quote')).toBeNull();
+    expect(screen.queryByTestId('question-attachments-list')).toBeNull();
+
+    fireEvent.pointerDown(screen.getByTestId('reader-gutter'));
+    expect(screen.queryByRole('toolbar', { name: '选中文字操作' })).toBeNull();
+    expect(screen.queryByTestId('active-quote')).toBeNull();
+  });
+
+  it('requires explicit actions for Ctrl selections and attachments', () => {
+    render(<FoundationSpike />);
+
+    selectText('block-02', '紧致性');
+    selectText('block-03', '因此', 'block-03', '因此', true, 'none');
+    expect(screen.getAllByTestId('selection-card')).toHaveLength(1);
+    fireEvent.click(screen.getByRole('button', { name: '针对选中文字提问' }));
+    expect(screen.getAllByTestId('selection-card')).toHaveLength(2);
+
+    selectText('block-02', '局部信息', 'block-02', '局部信息', true, 'none');
+    expect(screen.queryByTestId('question-attachments-list')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: '将选中文字作为附件' }));
+    expect(screen.getByTestId('question-attachments-list').textContent).toContain('局部信息');
+    expect(screen.getAllByTestId('selection-card')).toHaveLength(2);
+  });
+
+  it('accumulates ordinary question selections and starts fresh after sending', () => {
+    render(<FoundationSpike />);
+
+    selectText('block-02', '紧致性');
+    selectText('block-02', '局部信息');
+    const selectionCards = screen.getAllByTestId('selection-card');
+    expect(selectionCards).toHaveLength(2);
+    expect(selectionCards[0]?.textContent).toContain('紧致性');
+    expect(selectionCards[1]?.textContent).toContain('局部信息');
+
+    fireEvent.change(screen.getByLabelText('问题'), { target: { value: '比较这两段' } });
+    fireEvent.click(screen.getByRole('button', { name: '提问' }));
+
+    selectText('block-02', '全局控制', 'block-02', '全局控制', true);
+    const newSelectionCards = screen.getAllByTestId('selection-card');
+    expect(newSelectionCards).toHaveLength(1);
+    expect(newSelectionCards[0]?.textContent).toContain('全局控制');
+    expect(newSelectionCards[0]?.textContent).not.toContain('紧致性');
+    expect(newSelectionCards[0]?.textContent).not.toContain('局部信息');
+  });
 
   it('restores the pre-fullscreen size or half of the work area without overflowing', () => {
     expect(restoredWindowSize({ width: 1280, height: 760 }, { width: 1920, height: 1040 })).toEqual(
@@ -215,8 +273,7 @@ describe('foundation spike page', () => {
     expect(screen.getByTestId('reader-gutter').className).not.toContain('cursor-not-allowed');
 
     for (const text of ['紧致性', '局部信息', '全局控制']) {
-      fireEvent.click(screen.getByRole('button', { name: '将选中文本作为问题附件' }));
-      selectText('block-02', text);
+      selectText('block-02', text, 'block-02', text, false, 'attachment');
     }
 
     const list = screen.getByTestId('question-attachments-list');
@@ -242,8 +299,7 @@ describe('foundation spike page', () => {
   it('keeps sent attachments separate and opens long content in a movable dialog', () => {
     render(<FoundationSpike />);
     for (const text of ['紧致性', '局部信息']) {
-      fireEvent.click(screen.getByRole('button', { name: '将选中文本作为问题附件' }));
-      selectText('block-02', text);
+      selectText('block-02', text, 'block-02', text, false, 'attachment');
     }
     fireEvent.change(screen.getByLabelText('问题'), { target: { value: '附件问题' } });
     fireEvent.click(screen.getByRole('button', { name: '提问' }));
@@ -274,6 +330,7 @@ describe('foundation spike page', () => {
 
     const navigationButton = await screen.findByRole('button', { name: '打开导航目录' });
     expect(navigationButton).not.toBeNull();
+    expect(navigationButton.closest('[data-testid="reading-toolbar-actions"]')).not.toBeNull();
     fireEvent.click(navigationButton);
     expect(screen.getByRole('navigation', { name: '文档导航目录' })).not.toBeNull();
     const warning = await screen.findByRole('status');

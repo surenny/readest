@@ -13,6 +13,8 @@ beforeEach(() => {
     notebookNewHighlightIds: [],
     notebookEditAnnotation: null,
     notebookAnnotationDrafts: {},
+    aiQuestionAnchors: [],
+    aiDraftAttachments: [],
   });
 });
 
@@ -222,6 +224,54 @@ describe('notebookStore', () => {
     });
   });
 
+  describe('AI selection drafts', () => {
+    const context = {
+      id: 'book-1:epubcfi(/6/2!/4/1:0)',
+      bookKey: 'book-1',
+      text: 'Selected text',
+      page: 2,
+      index: 1,
+      cfi: 'epubcfi(/6/2!/4/1:0)',
+    };
+
+    test('accumulates question targets without sending or adding attachments', () => {
+      const second = { ...context, id: 'selection-2', text: 'Second selection' };
+      useNotebookStore.getState().addAIQuestionAnchor(context);
+      useNotebookStore.getState().addAIQuestionAnchor(second);
+
+      expect(useNotebookStore.getState().aiQuestionAnchors).toEqual([context, second]);
+      expect(useNotebookStore.getState().aiDraftAttachments).toEqual([]);
+    });
+
+    test('deduplicates and removes question targets independently', () => {
+      const second = { ...context, id: 'selection-2', text: 'Second selection' };
+      useNotebookStore.getState().addAIQuestionAnchor(context);
+      useNotebookStore.getState().addAIQuestionAnchor({ ...context, text: 'Same anchor' });
+      useNotebookStore.getState().addAIQuestionAnchor(second);
+
+      expect(useNotebookStore.getState().aiQuestionAnchors).toEqual([context, second]);
+      useNotebookStore.getState().removeAIQuestionAnchor(context.id);
+      expect(useNotebookStore.getState().aiQuestionAnchors).toEqual([second]);
+    });
+
+    test('accumulates independent attachments and removes them explicitly', () => {
+      const second = { ...context, id: 'selection-2', text: 'Second selection' };
+      useNotebookStore.getState().addAIDraftAttachment(context);
+      useNotebookStore.getState().addAIDraftAttachment(second);
+
+      expect(useNotebookStore.getState().aiDraftAttachments).toEqual([context, second]);
+      useNotebookStore.getState().removeAIDraftAttachment(context.id);
+      expect(useNotebookStore.getState().aiDraftAttachments).toEqual([second]);
+    });
+
+    test('deduplicates attachments by stable selection id', () => {
+      useNotebookStore.getState().addAIDraftAttachment(context);
+      useNotebookStore.getState().addAIDraftAttachment({ ...context, text: 'Same anchor' });
+
+      expect(useNotebookStore.getState().aiDraftAttachments).toEqual([context]);
+    });
+  });
+
   // ── Initial state ──────────────────────────────────────────────
   describe('initial state', () => {
     test('has correct defaults', () => {
@@ -234,6 +284,8 @@ describe('notebookStore', () => {
       expect(state.notebookNewHighlightIds).toEqual([]);
       expect(state.notebookEditAnnotation).toBeNull();
       expect(state.notebookAnnotationDrafts).toEqual({});
+      expect(state.aiQuestionAnchors).toEqual([]);
+      expect(state.aiDraftAttachments).toEqual([]);
     });
   });
 });

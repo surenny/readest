@@ -75,13 +75,15 @@ const WindowButtons: React.FC<WindowButtonsProps> = ({
     }
 
     const { getCurrentWindow } = await import('@tauri-apps/api/window');
+    const currentWindow = getCurrentWindow();
+    if (await currentWindow.isFullscreen?.()) return;
     if (e.buttons === 1) {
       if (e.detail === 2) {
-        getCurrentWindow().toggleMaximize();
+        currentWindow.toggleMaximize();
       } else if (needsPointerWindowControls()) {
         startPointerWindowMove(e);
       } else {
-        getCurrentWindow().startDragging();
+        currentWindow.startDragging();
       }
     }
   };
@@ -109,7 +111,9 @@ const WindowButtons: React.FC<WindowButtonsProps> = ({
 
     if (timeDiff < 300) {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      getCurrentWindow().toggleMaximize();
+      const currentWindow = getCurrentWindow();
+      if (await currentWindow.isFullscreen?.()) return;
+      currentWindow.toggleMaximize();
       return;
     }
 
@@ -137,7 +141,12 @@ const WindowButtons: React.FC<WindowButtonsProps> = ({
       touchState.current.isDragging = true;
       try {
         const { getCurrentWindow } = await import('@tauri-apps/api/window');
-        await getCurrentWindow().startDragging();
+        const currentWindow = getCurrentWindow();
+        if (await currentWindow.isFullscreen?.()) {
+          touchState.current.isDragging = false;
+          return;
+        }
+        await currentWindow.startDragging();
       } catch (error) {
         console.warn('Failed to start window dragging:', error);
       }

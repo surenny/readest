@@ -5,6 +5,21 @@ vi.mock('@tauri-apps/api/window', () => ({
   getAllWindows: vi.fn(),
 }));
 
+vi.mock('@tauri-apps/api/dpi', () => ({
+  LogicalPosition: class LogicalPosition {
+    constructor(
+      public x: number,
+      public y: number,
+    ) {}
+  },
+  LogicalSize: class LogicalSize {
+    constructor(
+      public width: number,
+      public height: number,
+    ) {}
+  },
+}));
+
 vi.mock('@tauri-apps/api/event', () => ({
   emitTo: vi.fn().mockResolvedValue(undefined),
   TauriEvent: { WINDOW_FOCUS: 'tauri://focus' },
@@ -139,8 +154,12 @@ function makeFullscreenWindow({
     setFullscreen: vi.fn().mockResolvedValue(undefined),
     unmaximize: vi.fn().mockResolvedValue(undefined),
     toggleMaximize: vi.fn().mockResolvedValue(undefined),
+    maximize: vi.fn().mockResolvedValue(undefined),
     innerSize: vi.fn().mockResolvedValue({ width: 800, height: 600 }),
+    outerPosition: vi.fn().mockResolvedValue({ x: 120, y: 80 }),
+    scaleFactor: vi.fn().mockResolvedValue(1.25),
     setSize: vi.fn().mockResolvedValue(undefined),
+    setPosition: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -200,6 +219,21 @@ describe('tauriHandleToggleFullScreen', () => {
     await tauriHandleToggleFullScreen();
 
     expect(win.setFullscreen).toHaveBeenCalledWith(true);
+  });
+
+  test('restores the Windows window size and position after a fullscreen round trip', async () => {
+    vi.mocked(osType).mockReturnValue('windows');
+    const win = makeFullscreenWindow({ isFullscreen: false, isMaximized: false });
+    vi.mocked(getCurrentWindow).mockReturnValue(
+      win as unknown as ReturnType<typeof getCurrentWindow>,
+    );
+
+    await tauriHandleToggleFullScreen();
+    win.isFullscreen.mockResolvedValue(true);
+    await tauriHandleToggleFullScreen();
+
+    expect(win.setSize).toHaveBeenCalledWith({ width: 640, height: 480 });
+    expect(win.setPosition).toHaveBeenCalledWith({ x: 96, y: 64 });
   });
 });
 

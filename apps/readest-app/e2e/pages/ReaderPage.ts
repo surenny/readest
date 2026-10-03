@@ -457,6 +457,68 @@ export class ReaderPage extends BasePage {
     return frame.locator('body').evaluate(() => document.getSelection()?.toString() ?? '');
   }
 
+  async selectPdfTextWithMouse(
+    modifier?: 'Control' | 'Meta',
+    eligibleSpanOffset = 0,
+  ): Promise<string> {
+    const viewport = this.page.viewportSize() ?? { width: 1280, height: 720 };
+    let eligibleSpanIndex = 0;
+
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const iframes = this.page.locator('.foliate-viewer iframe');
+      const frameCount = await iframes.count();
+      for (let frameIndex = 0; frameIndex < frameCount; frameIndex += 1) {
+        const frame = iframes.nth(frameIndex).contentFrame();
+        const spans = frame.locator('.textLayer span');
+        const spanCount = await spans.count().catch(() => 0);
+        for (let spanIndex = 0; spanIndex < Math.min(spanCount, 80); spanIndex += 1) {
+          const span = spans.nth(spanIndex);
+          const text = (await span.textContent().catch(() => ''))?.trim() ?? '';
+          const box = await span.boundingBox().catch(() => null);
+          if (
+            text.length < 8 ||
+            !box ||
+            box.width < 50 ||
+            box.height < 5 ||
+            box.x < 0 ||
+            box.y < 0 ||
+            box.x + box.width > viewport.width ||
+            box.y + box.height > viewport.height
+          ) {
+            continue;
+          }
+          if (eligibleSpanIndex < eligibleSpanOffset) {
+            eligibleSpanIndex += 1;
+            continue;
+          }
+
+          if (modifier) await this.page.keyboard.down(modifier);
+          try {
+            await this.page.mouse.move(
+              box.x + Math.min(3, box.width * 0.05),
+              box.y + box.height / 2,
+            );
+            await this.page.mouse.down();
+            await this.page.mouse.move(box.x + box.width * 0.8, box.y + box.height / 2, {
+              steps: 12,
+            });
+            await this.page.mouse.up();
+          } finally {
+            if (modifier) await this.page.keyboard.up(modifier);
+          }
+
+          const selected = await frame
+            .locator('body')
+            .evaluate(() => document.getSelection()?.toString().trim() ?? '');
+          if (selected) return selected;
+        }
+      }
+      await this.page.waitForTimeout(400);
+    }
+
+    throw new Error('real mouse drag did not select text in a visible PDF.js text layer');
+  }
+
   /**
    * Turn on an instant quick action (`Instant Dictionary`, `Instant Highlight`,
    * …) from the header bar's quick-action dropdown.
@@ -475,6 +537,10 @@ export class ReaderPage extends BasePage {
    */
   popupTool(name: string | RegExp): Locator {
     return this.annotationPopup.getByRole('button', { name, exact: typeof name === 'string' });
+  }
+
+  selectionAction(action: 'ask' | 'attach'): Locator {
+    return this.annotationPopup.locator(`[data-action="${action}"]`);
   }
 
   async highlightSelection(): Promise<void> {
