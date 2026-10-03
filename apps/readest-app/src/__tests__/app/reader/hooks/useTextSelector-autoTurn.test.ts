@@ -95,13 +95,15 @@ const doc = {
 
 const setSelection = (valid: boolean) => {
   const node = document.createTextNode('selected text');
+  const range = document.createRange();
+  range.selectNodeContents(node);
   currentSel = {
     focusNode: node,
     focusOffset: 0,
     isCollapsed: !valid,
     rangeCount: valid ? 1 : 0,
     toString: () => (valid ? 'selected text' : ''),
-    getRangeAt: () => ({}) as Range,
+    getRangeAt: () => range,
   } as unknown as Selection;
 };
 

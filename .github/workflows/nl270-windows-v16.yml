@@ -39,6 +39,8 @@ jobs:
           cd apps/readest-app
           pnpm exec dotenv -e .env -e .env.test.local -- vitest run \
             src/__tests__/utils/selection-range-snapshot.test.ts \
+            src/__tests__/app/reader/hooks/useTextSelector-touchSelection.test.ts \
+            src/__tests__/app/reader/hooks/useTextSelector-autoTurn.test.ts \
             src/__tests__/release/nl270-release-boundary.test.ts
       - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
         with:
