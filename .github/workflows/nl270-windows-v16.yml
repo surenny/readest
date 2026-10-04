@@ -61,6 +61,7 @@ jobs:
         with:
           toolchain: 1.96.0
           targets: x86_64-pc-windows-msvc
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16
         with:
           key: nl-270-windows-x64-cargo-v19

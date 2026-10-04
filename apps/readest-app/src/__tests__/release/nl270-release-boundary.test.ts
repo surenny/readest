@@ -60,6 +60,7 @@ describe('NL-270 release boundary', () => {
     );
     expect(workflow).toContain('pnpm clippy:check');
     expect(workflow).toContain('toolchain: 1.96.0');
+    expect(workflow).toContain('components: rustfmt, clippy');
     expect(workflow).toContain(
       'cargo clippy --manifest-path extensions/windows-thumbnail/Cargo.toml --target x86_64-pc-windows-msvc -- -D warnings',
     );
