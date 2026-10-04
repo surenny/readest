@@ -43,6 +43,7 @@ describe('NL-270 release boundary', () => {
   it('builds and verifies the accepted Foundation workspace path', () => {
     const workflow = read('.github/workflows/nl270-windows-v16.yml');
     const allowlist = read('.github/nl270-v19-change-allowlist.txt');
+    const frontendVerifier = read('apps/readest-app/scripts/verify-nl270-frontend.mjs');
     const tauriHost = read('apps/readest-app/src-tauri/src/lib.rs');
     const foundationPage = read('apps/readest-app/src/app/foundation-spike/page.tsx');
 
@@ -53,6 +54,7 @@ describe('NL-270 release boundary', () => {
     expect(workflow).toContain("sed 's/\\r$//' .github/nl270-v19-change-allowlist.txt");
     expect(workflow).toContain('src/__tests__/foundation/FoundationSpike.test.tsx');
     expect(workflow).toContain('pnpm lint');
+    expect(workflow).toContain("process.versions.node.split('.')[0] !== '24'");
     expect(workflow).toContain('pnpm format:check');
     expect(workflow).toContain('pnpm test -- --watch=false --testTimeout=15000');
     expect(workflow).toContain('pnpm fmt:check');
@@ -68,6 +70,13 @@ describe('NL-270 release boundary', () => {
     expect(workflow).toContain('pnpm test:rust');
     expect(allowlist).toContain('apps/readest-app/src-tauri/src/range_file.rs');
     expect(workflow).toContain('test -f out/foundation-spike.html');
+    expect(workflow).toContain('node scripts/verify-nl270-frontend.mjs out');
+    expect(workflow).not.toContain('rg -l --fixed-strings');
+    expect(frontendVerifier).toContain("'新建无锚点对话'");
+    expect(frontendVerifier).toContain("'针对选中文字提问'");
+    expect(frontendVerifier).toContain("'data-selection-action-menu'");
+    expect(frontendVerifier).toContain("'foundation-selection'");
+    expect(frontendVerifier).toContain('Frontend SHA256:');
     expect(tauriHost).toContain('option_env!("READEST_FOUNDATION_SPIKE") == Some("1")');
     expect(tauriHost).toContain('WebviewUrl::App("foundation-spike".into())');
     expect(foundationPage).toContain("aria-label='新建无锚点对话'");

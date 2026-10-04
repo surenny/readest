@@ -54,6 +54,7 @@ jobs:
         shell: bash
         run: |
           cd apps/readest-app
+          node -e "if (process.versions.node.split('.')[0] !== '24') process.exit(1)"
           pnpm lint
           pnpm format:check
           pnpm test -- --watch=false --testTimeout=15000
@@ -89,14 +90,7 @@ jobs:
           cd apps/readest-app
           pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis --config '{"productName":"Readest NL-270","identifier":"com.readest.nl270","version":"0.12.32","bundle":{"createUpdaterArtifacts":false}}'
           test -f out/foundation-spike.html
-          rg -l --fixed-strings '新建无锚点对话' out/_next/static
-          rg -l --fixed-strings '针对选中文字提问' out/_next/static
-          rg -l --fixed-strings 'data-selection-action-menu' out/_next/static
-          rg -l --fixed-strings 'foundation-selection' out/_next/static
-          frontend_hash="$(find out -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')"
-          frontend_files="$(find out -type f | wc -l | tr -d ' ')"
-          echo "Frontend files: $frontend_files"
-          echo "Frontend SHA256: $frontend_hash"
+          node scripts/verify-nl270-frontend.mjs out
       - name: verify installer and payload
         shell: pwsh
         run: |

@@ -7,6 +7,7 @@ apps/readest-app/extensions/windows-thumbnail/src/extraction.rs
 apps/readest-app/scripts/nightly-verify-harness/README.md
 apps/readest-app/scripts/nightly-verify-harness/artifacts/test.bin
 apps/readest-app/scripts/nightly-verify-harness/serve.mjs
+apps/readest-app/scripts/verify-nl270-frontend.mjs
 apps/readest-app/src-tauri/Cargo.toml
 apps/readest-app/src-tauri/build.rs
 apps/readest-app/src-tauri/capabilities/default.json
