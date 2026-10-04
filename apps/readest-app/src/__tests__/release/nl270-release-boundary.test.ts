@@ -53,7 +53,7 @@ describe('NL-270 release boundary', () => {
     expect(workflow).toContain('src/__tests__/foundation/FoundationSpike.test.tsx');
     expect(workflow).toContain('pnpm lint');
     expect(workflow).toContain('pnpm format:check');
-    expect(workflow).toContain('pnpm test -- --watch=false');
+    expect(workflow).toContain('pnpm test -- --watch=false --testTimeout=15000');
     expect(workflow).toContain('pnpm fmt:check');
     expect(workflow).toContain(
       'cargo fmt --manifest-path extensions/windows-thumbnail/Cargo.toml --check',
