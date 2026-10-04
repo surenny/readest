@@ -55,7 +55,14 @@ describe('NL-270 release boundary', () => {
     expect(workflow).toContain('pnpm format:check');
     expect(workflow).toContain('pnpm test -- --watch=false');
     expect(workflow).toContain('pnpm fmt:check');
+    expect(workflow).toContain(
+      'cargo fmt --manifest-path extensions/windows-thumbnail/Cargo.toml --check',
+    );
     expect(workflow).toContain('pnpm clippy:check');
+    expect(workflow).toContain('toolchain: 1.96.0');
+    expect(workflow).toContain(
+      'cargo clippy --manifest-path extensions/windows-thumbnail/Cargo.toml --target x86_64-pc-windows-msvc -- -D warnings',
+    );
     expect(workflow).toContain('pnpm test:rust');
     expect(workflow).toContain('test -f out/foundation-spike.html');
     expect(tauriHost).toContain('option_env!("READEST_FOUNDATION_SPIKE") == Some("1")');

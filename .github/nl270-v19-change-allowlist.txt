@@ -2,6 +2,8 @@
 .github/workflows/nl270-windows-v16.yml
 Cargo.lock
 apps/readest-app/package.json
+apps/readest-app/extensions/windows-thumbnail/src/com_provider.rs
+apps/readest-app/extensions/windows-thumbnail/src/extraction.rs
 apps/readest-app/scripts/nightly-verify-harness/README.md
 apps/readest-app/scripts/nightly-verify-harness/artifacts/test.bin
 apps/readest-app/scripts/nightly-verify-harness/serve.mjs
