@@ -48,6 +48,7 @@ describe('NL-270 release boundary', () => {
     expect(workflow).toContain("READEST_FOUNDATION_SPIKE: '1'");
     expect(workflow).toContain('echo "READEST_FOUNDATION_SPIKE=1"');
     expect(workflow).toContain('fetch-depth: 0');
+    expect(workflow).toContain('git config --global core.autocrlf false');
     expect(workflow).toContain("sed 's/\\r$//' .github/nl270-v19-change-allowlist.txt");
     expect(workflow).toContain('src/__tests__/foundation/FoundationSpike.test.tsx');
     expect(workflow).toContain('pnpm lint');
