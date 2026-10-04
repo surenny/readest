@@ -42,6 +42,7 @@ describe('NL-270 release boundary', () => {
 
   it('builds and verifies the accepted Foundation workspace path', () => {
     const workflow = read('.github/workflows/nl270-windows-v16.yml');
+    const allowlist = read('.github/nl270-v19-change-allowlist.txt');
     const tauriHost = read('apps/readest-app/src-tauri/src/lib.rs');
     const foundationPage = read('apps/readest-app/src/app/foundation-spike/page.tsx');
 
@@ -65,6 +66,7 @@ describe('NL-270 release boundary', () => {
       'cargo clippy --manifest-path extensions/windows-thumbnail/Cargo.toml --target x86_64-pc-windows-msvc -- -D warnings',
     );
     expect(workflow).toContain('pnpm test:rust');
+    expect(allowlist).toContain('apps/readest-app/src-tauri/src/range_file.rs');
     expect(workflow).toContain('test -f out/foundation-spike.html');
     expect(tauriHost).toContain('option_env!("READEST_FOUNDATION_SPIKE") == Some("1")');
     expect(tauriHost).toContain('WebviewUrl::App("foundation-spike".into())');

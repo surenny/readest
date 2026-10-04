@@ -244,24 +244,44 @@ mod tests {
 
     #[test]
     fn safe_path_accepts_absolute_traversal_free() {
-        assert!(is_safe_path(Path::new(
-            "/data/user/0/com.bilingify.readest/Readest/Books/a.epub"
-        )));
-        assert!(is_safe_path(Path::new("/书/堂吉诃德.mobi")));
+        #[cfg(windows)]
+        let paths = [
+            r"C:\Users\reader\Readest\Books\a.epub",
+            r"C:\书\堂吉诃德.mobi",
+        ];
+        #[cfg(not(windows))]
+        let paths = [
+            "/data/user/0/com.bilingify.readest/Readest/Books/a.epub",
+            "/书/堂吉诃德.mobi",
+        ];
+
+        assert!(paths.iter().all(|path| is_safe_path(Path::new(path))));
     }
 
     #[test]
     fn safe_path_rejects_parent_dir_traversal() {
-        assert!(!is_safe_path(Path::new(
-            "/data/user/0/com.bilingify.readest/Readest/../../../../etc/passwd"
-        )));
-        assert!(!is_safe_path(Path::new("/a/../b")));
+        #[cfg(windows)]
+        let paths = [
+            r"C:\Users\reader\Readest\..\..\Windows\system.ini",
+            r"C:\a\..\b",
+        ];
+        #[cfg(not(windows))]
+        let paths = [
+            "/data/user/0/com.bilingify.readest/Readest/../../../../etc/passwd",
+            "/a/../b",
+        ];
+
+        assert!(paths.iter().all(|path| !is_safe_path(Path::new(path))));
     }
 
     #[test]
     fn safe_path_rejects_relative_and_nul() {
         assert!(!is_safe_path(Path::new("data/x/a.epub"))); // not absolute
         assert!(!is_safe_path(Path::new("a.epub")));
-        assert!(!is_safe_path(Path::new("/data/a\0b.epub"))); // NUL byte
+        #[cfg(windows)]
+        let nul_path = "C:\\data\\a\0b.epub";
+        #[cfg(not(windows))]
+        let nul_path = "/data/a\0b.epub";
+        assert!(!is_safe_path(Path::new(nul_path))); // NUL byte
     }
 }
