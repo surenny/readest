@@ -69,6 +69,12 @@ interface HighlightConstructor {
   new (...ranges: Range[]): unknown;
 }
 
+interface SelectionBoundary {
+  blockId: string;
+  path: number[];
+  offset: number;
+}
+
 interface WindowDimensions {
   width: number;
   height: number;
@@ -164,6 +170,10 @@ export default function FoundationSpike() {
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const sidebarDrag = useRef<{ startX: number; startWidth: number } | null>(null);
   const sourcePointerStart = useRef<{ x: number; y: number } | null>(null);
+  const pendingSelectionBoundaries = useRef<{
+    start: SelectionBoundary;
+    end: SelectionBoundary;
+  } | null>(null);
   const normalWindowSize = useRef<{ width: number; height: number } | null>(null);
   const toolbarExpanded = readingSettings.toolbarPinned || toolbarHovered;
   const store = useMemo(
@@ -364,6 +374,7 @@ export default function FoundationSpike() {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
     const range = selection.getRangeAt(0);
+    const nextText = selection.toString().trim();
     const startElement =
       range.startContainer.nodeType === Node.ELEMENT_NODE
         ? (range.startContainer as Element)
@@ -386,6 +397,21 @@ export default function FoundationSpike() {
       setSelectionError('请选择左侧编号源块中的连续文字。');
       return;
     }
+    const textPath = (root: HTMLElement, node: Node) => {
+      const path: number[] = [];
+      let current: Node | null = node;
+      while (current && current !== root) {
+        const parent: Node | null = current.parentNode;
+        if (!parent) return null;
+        path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
+        current = parent;
+      }
+      return current === root ? path : null;
+    };
+    const startPath = textPath(startText, range.startContainer);
+    const endPath = textPath(endText, range.endContainer);
+    if (!startPath || !endPath) return;
+    selection.removeAllRanges();
     const offsetWithin = (element: HTMLElement, container: Node, offset: number) => {
       const prefix = globalThis.document.createRange();
       prefix.selectNodeContents(element);
@@ -404,7 +430,6 @@ export default function FoundationSpike() {
           ? offsetWithin(endText, range.endContainer, range.endOffset)
           : (endText.textContent?.length ?? 0),
       );
-      const nextText = selection.toString().trim();
       if (attachSelection) {
         if (nextText) setQuestionAttachments((current) => [...current, nextText]);
         setAttachSelection(false);
@@ -412,6 +437,10 @@ export default function FoundationSpike() {
         return;
       }
       setAnchor(nextAnchor);
+      pendingSelectionBoundaries.current = {
+        start: { blockId: startBlockId, path: startPath, offset: range.startOffset },
+        end: { blockId: endBlockId, path: endPath, offset: range.endOffset },
+      };
       setSelectedAnchors((current) => (event.ctrlKey ? [...current, nextAnchor] : [nextAnchor]));
       setSelectionAttachments((current) =>
         event.ctrlKey && current.length > 0 ? [...current, nextText] : [nextText],
@@ -437,6 +466,7 @@ export default function FoundationSpike() {
     );
     setQuestion('');
     setQuestionAttachments([]);
+    pendingSelectionBoundaries.current = null;
     refreshThreads(updated.id);
     requestAnimationFrame(() => {
       const conversation = conversationScrollRef.current;
@@ -445,6 +475,7 @@ export default function FoundationSpike() {
   };
 
   const selectThread = (thread: SourceDocThread) => {
+    pendingSelectionBoundaries.current = null;
     setActiveThreadId(thread.id);
     setAnchor(thread.unanchored ? null : thread.anchor);
     setSelectedAnchors(thread.unanchored ? [] : [thread.anchor]);
@@ -506,6 +537,7 @@ export default function FoundationSpike() {
   };
 
   const clearSelection = () => {
+    pendingSelectionBoundaries.current = null;
     setAnchor(null);
     setSelectionPreview('');
     setSelectionAttachments([]);
@@ -677,21 +709,69 @@ export default function FoundationSpike() {
         }
       }
     }
-    for (const selectedAnchor of selectedAnchors) {
-      for (const blockId of selectedAnchor.selectedBlockIds) {
+    const pending = pendingSelectionBoundaries.current;
+    if (pending && !activeThreadId) {
+      const resolve = (boundary: SelectionBoundary) => {
         const element = globalThis.document.querySelector<HTMLElement>(
-          `[data-source-text="${blockId}"]`,
+          `[data-source-text="${boundary.blockId}"]`,
         );
-        if (!element) continue;
-        const blockPosition = selectedAnchor.selectedBlockIds.indexOf(blockId);
-        const range = domRange(
-          element,
-          blockPosition === 0 ? selectedAnchor.startOffset : 0,
-          blockPosition === selectedAnchor.selectedBlockIds.length - 1
-            ? selectedAnchor.endOffset
-            : (element.textContent?.length ?? 0),
+        if (!element) return null;
+        let node: Node = element;
+        for (const index of boundary.path) {
+          const child = node.childNodes[index];
+          if (!child) return null;
+          node = child;
+        }
+        return [node, boundary.offset] as const;
+      };
+      const start = resolve(pending.start);
+      const end = resolve(pending.end);
+      if (start && end) {
+        const pendingRange = globalThis.document.createRange();
+        pendingRange.setStart(...start);
+        pendingRange.setEnd(...end);
+        const sourceTexts = Array.from(
+          globalThis.document.querySelectorAll<HTMLElement>('[data-source-text]'),
         );
-        if (range) selectionRanges.push(range);
+        const first = sourceTexts.findIndex(
+          (element) => element.dataset['sourceText'] === pending.start.blockId,
+        );
+        const last = sourceTexts.findIndex(
+          (element) => element.dataset['sourceText'] === pending.end.blockId,
+        );
+        for (const element of sourceTexts.slice(Math.min(first, last), Math.max(first, last) + 1)) {
+          const blockRange = globalThis.document.createRange();
+          blockRange.selectNodeContents(element);
+          if (
+            element ===
+            globalThis.document.querySelector(`[data-source-text="${pending.start.blockId}"]`)
+          )
+            blockRange.setStart(...start);
+          if (
+            element ===
+            globalThis.document.querySelector(`[data-source-text="${pending.end.blockId}"]`)
+          )
+            blockRange.setEnd(...end);
+          if (!blockRange.collapsed) selectionRanges.push(blockRange);
+        }
+      }
+    } else {
+      for (const selectedAnchor of selectedAnchors) {
+        for (const blockId of selectedAnchor.selectedBlockIds) {
+          const element = globalThis.document.querySelector<HTMLElement>(
+            `[data-source-text="${blockId}"]`,
+          );
+          if (!element) continue;
+          const blockPosition = selectedAnchor.selectedBlockIds.indexOf(blockId);
+          const range = domRange(
+            element,
+            blockPosition === 0 ? selectedAnchor.startOffset : 0,
+            blockPosition === selectedAnchor.selectedBlockIds.length - 1
+              ? selectedAnchor.endOffset
+              : (element.textContent?.length ?? 0),
+          );
+          if (range) selectionRanges.push(range);
+        }
       }
     }
     css.highlights.set(ANNOTATION_HIGHLIGHT, new HighlightClass(...annotationRanges));
@@ -1355,7 +1435,7 @@ export default function FoundationSpike() {
                     data-highlighted={highlighted ? 'true' : 'false'}
                     data-previewed={previewed ? 'true' : 'false'}
                     className={`relative scroll-m-24 pl-1 ${item.type === 'heading' ? 'mb-5 mt-9 first:mt-0' : 'mb-[1em]'}`}
-                    style={{ color: highlighted ? '#111827' : foreground }}
+                    style={{ color: foreground }}
                   >
                     {previewThread &&
                     (readingSettings.annotationDisplay !== 'underline' ||
@@ -1381,7 +1461,6 @@ export default function FoundationSpike() {
                     <div
                       data-source-text={item.id}
                       className='source-markdown [&_p]:m-0'
-                      style={{ backgroundColor: highlighted ? '#fef08a' : undefined }}
                       onPointerDown={(event) => {
                         sourcePointerStart.current = { x: event.clientX, y: event.clientY };
                       }}

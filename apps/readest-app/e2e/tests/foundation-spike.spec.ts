@@ -25,6 +25,17 @@ test.describe('NL-270 foundation spike', () => {
     });
 
     await expect(page.getByText('当前锚点 · 2 块')).toBeVisible();
+    expect(
+      await page.evaluate(() =>
+        Array.from(CSS.highlights.get('foundation-selection') ?? [], (range) => range.toString()),
+      ),
+    ).toEqual([
+      '紧致性把局部信息提升为全局控制，并允许我们从无限过程里抽取收敛子列。',
+      '对连续函数而言，紧致集上的像仍然紧致，因此',
+    ]);
+    expect(await sourceBlock.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
+      'rgba(0, 0, 0, 0)',
+    );
     await expect(page.getByTestId('active-quote')).toContainText('紧致性把局部信息提升为全局控制');
     await expect(page.getByTestId('active-quote')).toContainText('因此');
     await page.getByRole('textbox', { name: '问题' }).fill('为什么需要紧致性？');
