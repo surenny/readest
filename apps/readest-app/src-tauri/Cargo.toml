@@ -16,6 +16,7 @@ crate-type = ["staticlib", "cdylib", "lib"]
 
 [features]
 default = ["wry"]
+custom-protocol = ["tauri/custom-protocol"]
 # WebView2 / WKWebView runtime, and on Linux the WebKitGTK one, which is left
 # only for the webdriver test harness (scripts/test-tauri.sh) — every Linux
 # build that ships runs on CEF and turns this off

@@ -41,7 +41,7 @@ jobs:
           NODE_OPTIONS: '--max-old-space-size=8192'
         run: |
           cd apps/readest-app
-          pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis --config '{"productName":"Readest NL-270","identifier":"com.readest.nl270","version":"0.12.22","bundle":{"createUpdaterArtifacts":false}}'
+          pnpm tauri build --target x86_64-pc-windows-msvc --bundles nsis --features custom-protocol --config '{"productName":"Readest NL-270","identifier":"com.readest.nl270","version":"0.12.22","bundle":{"createUpdaterArtifacts":false}}'
       - name: verify installer
         shell: pwsh
         run: |

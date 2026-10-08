@@ -54,6 +54,11 @@ mod window_state;
 #[cfg(target_os = "windows")]
 use tauri::webview::ScrollBarStyle;
 use tauri::{command, Emitter, WebviewUrl, WebviewWindowBuilder, Window};
+
+#[cfg(all(not(debug_assertions), not(custom_protocol)))]
+compile_error!(
+    "release builds must enable the `custom-protocol` feature so the packaged app does not use devUrl"
+);
 #[cfg(target_os = "android")]
 use tauri_plugin_native_bridge::register_select_directory_callback;
 #[cfg(target_os = "android")]
