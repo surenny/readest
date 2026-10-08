@@ -29,6 +29,7 @@ describe('foundation spike page', () => {
     startText: string,
     endBlockId = startBlockId,
     endText = startText,
+    action: 'question' | 'attachment' = 'question',
   ) => {
     const startElement = screen
       .getByTestId(`source-block-${startBlockId}`)
@@ -53,6 +54,11 @@ describe('foundation spike page', () => {
     window.getSelection()?.removeAllRanges();
     window.getSelection()?.addRange(range);
     fireEvent.mouseUp(startElement.closest('article')!);
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: action === 'question' ? '针对选中文字提问' : '将选中文字作为附件',
+      }),
+    );
   };
 
   it('restores the pre-fullscreen size or half of the work area without overflowing', () => {
@@ -214,8 +220,7 @@ describe('foundation spike page', () => {
     expect(screen.getByTestId('reader-gutter').className).not.toContain('cursor-not-allowed');
 
     for (const text of ['紧致性', '局部信息', '全局控制']) {
-      fireEvent.click(screen.getByRole('button', { name: '将选中文本作为问题附件' }));
-      selectText('block-02', text);
+      selectText('block-02', text, 'block-02', text, 'attachment');
     }
 
     const list = screen.getByTestId('question-attachments-list');

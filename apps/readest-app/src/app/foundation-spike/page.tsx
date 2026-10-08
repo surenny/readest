@@ -69,13 +69,24 @@ interface HighlightConstructor {
   new (...ranges: Range[]): unknown;
 }
 
-interface SelectionBoundary {
-  blockId: string;
-  path: number[];
-  offset: number;
+interface WindowDimensions {
+  width: number;
+  height: number;
 }
 
-interface WindowDimensions {
+interface PendingSelection {
+  anchor: SourceDocAnchor;
+  text: string;
+  rects: SelectionHighlightRect[];
+  append: boolean;
+  x: number;
+  y: number;
+}
+
+interface SelectionHighlightRect {
+  id: string;
+  left: number;
+  top: number;
   width: number;
   height: number;
 }
@@ -123,6 +134,73 @@ function domRange(element: HTMLElement, start: number, end: number): Range | nul
   return range;
 }
 
+function textFragmentsForRange(selectionRange: Range): Array<{ blockId: string; range: Range }> {
+  const textNodes = Array.from(
+    globalThis.document.querySelectorAll<HTMLElement>('[data-source-text]'),
+  ).flatMap((element) => {
+    const blockId = element.dataset['sourceText'];
+    if (!blockId) return [];
+    const walker = globalThis.document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    const nodes: Array<{ blockId: string; node: Text }> = [];
+    while (walker.nextNode()) nodes.push({ blockId, node: walker.currentNode as Text });
+    return nodes;
+  });
+  const boundaryText = (container: Node, offset: number, start: boolean) => {
+    if (container.nodeType === Node.TEXT_NODE) return { node: container as Text, offset };
+    const child = container.childNodes[start ? offset : offset - 1];
+    if (!child) return null;
+    const walker = globalThis.document.createTreeWalker(child, NodeFilter.SHOW_TEXT);
+    if (start) {
+      const node = walker.nextNode() as Text | null;
+      return node ? { node, offset: 0 } : null;
+    }
+    let node: Text | null = null;
+    while (walker.nextNode()) node = walker.currentNode as Text;
+    return node ? { node, offset: node.data.length } : null;
+  };
+  const start = boundaryText(selectionRange.startContainer, selectionRange.startOffset, true);
+  const end = boundaryText(selectionRange.endContainer, selectionRange.endOffset, false);
+  if (!start || !end) return [];
+  const firstIndex = textNodes.findIndex(({ node }) => node === start.node);
+  const lastIndex = textNodes.findIndex(({ node }) => node === end.node);
+  if (firstIndex < 0 || lastIndex < firstIndex) return [];
+  const fragments: Array<{ blockId: string; range: Range }> = [];
+  for (let index = firstIndex; index <= lastIndex; index += 1) {
+    const { blockId, node } = textNodes[index]!;
+    const startOffset = index === firstIndex ? start.offset : 0;
+    const endOffset = index === lastIndex ? end.offset : node.data.length;
+    if (endOffset <= startOffset) continue;
+    const fragment = globalThis.document.createRange();
+    fragment.setStart(node, startOffset);
+    fragment.setEnd(node, endOffset);
+    fragments.push({ blockId, range: fragment });
+  }
+  return fragments;
+}
+
+function selectionRectsForRange(
+  selectionRange: Range,
+  paper: HTMLElement,
+): SelectionHighlightRect[] {
+  const paperBounds = paper.getBoundingClientRect();
+  return textFragmentsForRange(selectionRange).flatMap(({ blockId, range }, rangeIndex) =>
+    (typeof range.getClientRects === 'function' ? Array.from(range.getClientRects()) : []).flatMap(
+      (rect, rectIndex) =>
+        rect.width > 0 && rect.height > 0
+          ? [
+              {
+                id: `${blockId}-${rangeIndex}-${rectIndex}`,
+                left: rect.left - paperBounds.left,
+                top: rect.top - paperBounds.top,
+                width: rect.width,
+                height: rect.height,
+              },
+            ]
+          : [],
+    ),
+  );
+}
+
 export default function FoundationSpike() {
   const { appService } = useEnv();
   const libraryBookId =
@@ -140,7 +218,10 @@ export default function FoundationSpike() {
   const [, setSelectionAttachments] = useState<string[]>([]);
   const [questionAttachments, setQuestionAttachments] = useState<string[]>([]);
   const [selectedAnchors, setSelectedAnchors] = useState<SourceDocAnchor[]>([]);
-  const [attachSelection, setAttachSelection] = useState(false);
+  const [pendingSelection, setPendingSelection] = useState<PendingSelection | null>(null);
+  const [selectionHighlightRects, setSelectionHighlightRects] = useState<SelectionHighlightRect[]>(
+    [],
+  );
   const [annotationPickerBlockId, setAnnotationPickerBlockId] = useState<string | null>(null);
   const [previewedThreadId, setPreviewedThreadId] = useState<string | null>(null);
   const [expandedAttachmentIds, setExpandedAttachmentIds] = useState<string[]>([]);
@@ -167,13 +248,10 @@ export default function FoundationSpike() {
   const [expandedEvidenceIds, setExpandedEvidenceIds] = useState<string[]>([]);
   const [showUnanchoredOnly, setShowUnanchoredOnly] = useState(false);
   const readerScrollRef = useRef<HTMLDivElement | null>(null);
+  const paperRef = useRef<HTMLElement | null>(null);
   const conversationScrollRef = useRef<HTMLDivElement | null>(null);
   const sidebarDrag = useRef<{ startX: number; startWidth: number } | null>(null);
   const sourcePointerStart = useRef<{ x: number; y: number } | null>(null);
-  const pendingSelectionBoundaries = useRef<{
-    start: SelectionBoundary;
-    end: SelectionBoundary;
-  } | null>(null);
   const normalWindowSize = useRef<{ width: number; height: number } | null>(null);
   const toolbarExpanded = readingSettings.toolbarPinned || toolbarHovered;
   const store = useMemo(
@@ -374,7 +452,7 @@ export default function FoundationSpike() {
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
     const range = selection.getRangeAt(0);
-    const nextText = selection.toString().trim();
+    const nextText = selection.toString();
     const startElement =
       range.startContainer.nodeType === Node.ELEMENT_NODE
         ? (range.startContainer as Element)
@@ -397,21 +475,6 @@ export default function FoundationSpike() {
       setSelectionError('请选择左侧编号源块中的连续文字。');
       return;
     }
-    const textPath = (root: HTMLElement, node: Node) => {
-      const path: number[] = [];
-      let current: Node | null = node;
-      while (current && current !== root) {
-        const parent: Node | null = current.parentNode;
-        if (!parent) return null;
-        path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
-        current = parent;
-      }
-      return current === root ? path : null;
-    };
-    const startPath = textPath(startText, range.startContainer);
-    const endPath = textPath(endText, range.endContainer);
-    if (!startPath || !endPath) return;
-    selection.removeAllRanges();
     const offsetWithin = (element: HTMLElement, container: Node, offset: number) => {
       const prefix = globalThis.document.createRange();
       prefix.selectNodeContents(element);
@@ -430,30 +493,75 @@ export default function FoundationSpike() {
           ? offsetWithin(endText, range.endContainer, range.endOffset)
           : (endText.textContent?.length ?? 0),
       );
-      if (attachSelection) {
-        if (nextText) setQuestionAttachments((current) => [...current, nextText]);
-        setAttachSelection(false);
-        setSelectionError('');
-        return;
-      }
-      setAnchor(nextAnchor);
-      pendingSelectionBoundaries.current = {
-        start: { blockId: startBlockId, path: startPath, offset: range.startOffset },
-        end: { blockId: endBlockId, path: endPath, offset: range.endOffset },
-      };
-      setSelectedAnchors((current) => (event.ctrlKey ? [...current, nextAnchor] : [nextAnchor]));
-      setSelectionAttachments((current) =>
-        event.ctrlKey && current.length > 0 ? [...current, nextText] : [nextText],
+      if (!nextText.trim()) return;
+      const selectionRect =
+        typeof range.getBoundingClientRect === 'function'
+          ? range.getBoundingClientRect()
+          : startText.getBoundingClientRect();
+      const menuWidth = 190;
+      const menuHeight = 44;
+      const x = Math.max(
+        menuWidth / 2 + 12,
+        Math.min(
+          window.innerWidth - menuWidth / 2 - 12,
+          selectionRect.left + selectionRect.width / 2,
+        ),
       );
-      setSelectionPreview((current) =>
-        event.ctrlKey && current ? `${current}\n${nextText}` : nextText,
-      );
-      setActiveThreadId(null);
+      const preferredY =
+        selectionRect.top >= menuHeight + 16
+          ? selectionRect.top - menuHeight - 8
+          : selectionRect.bottom + 8;
+      const y = Math.max(12, Math.min(window.innerHeight - menuHeight - 12, preferredY));
+      const rects = selectionRectsForRange(range, paperRef.current ?? startText);
+      setSelectionHighlightRects(rects);
+      setPendingSelection({
+        anchor: nextAnchor,
+        text: nextText,
+        rects,
+        append: event.ctrlKey,
+        x,
+        y,
+      });
+      setHighlightedCitation(null);
       setSelectionError('');
+      selection.removeAllRanges();
     } catch {
       setSelectionError('选区无法建立锚点，请从前向后选择连续正文。');
     }
   };
+
+  const useSelectionForQuestion = () => {
+    if (!pendingSelection) return;
+    const { anchor: nextAnchor, rects, text, append } = pendingSelection;
+    setAnchor(nextAnchor);
+    setSelectedAnchors((current) => (append ? [...current, nextAnchor] : [nextAnchor]));
+    setSelectionHighlightRects((current) => (append ? [...current, ...rects] : rects));
+    setSelectionAttachments((current) =>
+      append && current.length > 0 ? [...current, text] : [text],
+    );
+    setSelectionPreview((current) => (append && current ? `${current}\n${text}` : text));
+    setActiveThreadId(null);
+    setPendingSelection(null);
+  };
+
+  const useSelectionAsAttachment = () => {
+    if (!pendingSelection) return;
+    setQuestionAttachments((current) => [...current, pendingSelection.text]);
+    setPendingSelection(null);
+    setSelectionHighlightRects([]);
+  };
+
+  useEffect(() => {
+    if (!pendingSelection) return;
+    const dismissPendingSelection = (event: PointerEvent) => {
+      const target = event.target as Element | null;
+      if (target?.closest('[data-selection-action-menu]')) return;
+      setPendingSelection(null);
+      setSelectionHighlightRects([]);
+    };
+    document.addEventListener('pointerdown', dismissPendingSelection);
+    return () => document.removeEventListener('pointerdown', dismissPendingSelection);
+  }, [pendingSelection]);
 
   const ask = () => {
     if (!store || !question.trim()) return;
@@ -466,7 +574,8 @@ export default function FoundationSpike() {
     );
     setQuestion('');
     setQuestionAttachments([]);
-    pendingSelectionBoundaries.current = null;
+    setPendingSelection(null);
+    setSelectionHighlightRects([]);
     refreshThreads(updated.id);
     requestAnimationFrame(() => {
       const conversation = conversationScrollRef.current;
@@ -475,7 +584,8 @@ export default function FoundationSpike() {
   };
 
   const selectThread = (thread: SourceDocThread) => {
-    pendingSelectionBoundaries.current = null;
+    setPendingSelection(null);
+    setSelectionHighlightRects([]);
     setActiveThreadId(thread.id);
     setAnchor(thread.unanchored ? null : thread.anchor);
     setSelectedAnchors(thread.unanchored ? [] : [thread.anchor]);
@@ -537,12 +647,25 @@ export default function FoundationSpike() {
   };
 
   const clearSelection = () => {
-    pendingSelectionBoundaries.current = null;
+    setPendingSelection(null);
     setAnchor(null);
     setSelectionPreview('');
     setSelectionAttachments([]);
     setSelectedAnchors([]);
+    setSelectionHighlightRects([]);
     setActiveThreadId(null);
+    setSelectionError('');
+    setAnnotationPickerBlockId(null);
+    window.getSelection()?.removeAllRanges();
+  };
+
+  const startUnanchoredChat = () => {
+    setActiveThreadId(null);
+    setAnchor(null);
+    setSelectedAnchors([]);
+    setSelectionHighlightRects([]);
+    setPendingSelection(null);
+    setQuestionAttachments([]);
     setSelectionError('');
     setAnnotationPickerBlockId(null);
     window.getSelection()?.removeAllRanges();
@@ -684,7 +807,6 @@ export default function FoundationSpike() {
     if (!css.highlights || !HighlightClass) return;
     const annotationRanges: Range[] = [];
     const activeAnnotationRanges: Range[] = [];
-    const selectionRanges: Range[] = [];
     for (const thread of threads) {
       if (thread.unanchored) continue;
       if (readingSettings.annotationDisplay === 'card') continue;
@@ -709,74 +831,8 @@ export default function FoundationSpike() {
         }
       }
     }
-    const pending = pendingSelectionBoundaries.current;
-    if (pending && !activeThreadId) {
-      const resolve = (boundary: SelectionBoundary) => {
-        const element = globalThis.document.querySelector<HTMLElement>(
-          `[data-source-text="${boundary.blockId}"]`,
-        );
-        if (!element) return null;
-        let node: Node = element;
-        for (const index of boundary.path) {
-          const child = node.childNodes[index];
-          if (!child) return null;
-          node = child;
-        }
-        return [node, boundary.offset] as const;
-      };
-      const start = resolve(pending.start);
-      const end = resolve(pending.end);
-      if (start && end) {
-        const pendingRange = globalThis.document.createRange();
-        pendingRange.setStart(...start);
-        pendingRange.setEnd(...end);
-        const sourceTexts = Array.from(
-          globalThis.document.querySelectorAll<HTMLElement>('[data-source-text]'),
-        );
-        const first = sourceTexts.findIndex(
-          (element) => element.dataset['sourceText'] === pending.start.blockId,
-        );
-        const last = sourceTexts.findIndex(
-          (element) => element.dataset['sourceText'] === pending.end.blockId,
-        );
-        for (const element of sourceTexts.slice(Math.min(first, last), Math.max(first, last) + 1)) {
-          const blockRange = globalThis.document.createRange();
-          blockRange.selectNodeContents(element);
-          if (
-            element ===
-            globalThis.document.querySelector(`[data-source-text="${pending.start.blockId}"]`)
-          )
-            blockRange.setStart(...start);
-          if (
-            element ===
-            globalThis.document.querySelector(`[data-source-text="${pending.end.blockId}"]`)
-          )
-            blockRange.setEnd(...end);
-          if (!blockRange.collapsed) selectionRanges.push(blockRange);
-        }
-      }
-    } else {
-      for (const selectedAnchor of selectedAnchors) {
-        for (const blockId of selectedAnchor.selectedBlockIds) {
-          const element = globalThis.document.querySelector<HTMLElement>(
-            `[data-source-text="${blockId}"]`,
-          );
-          if (!element) continue;
-          const blockPosition = selectedAnchor.selectedBlockIds.indexOf(blockId);
-          const range = domRange(
-            element,
-            blockPosition === 0 ? selectedAnchor.startOffset : 0,
-            blockPosition === selectedAnchor.selectedBlockIds.length - 1
-              ? selectedAnchor.endOffset
-              : (element.textContent?.length ?? 0),
-          );
-          if (range) selectionRanges.push(range);
-        }
-      }
-    }
     css.highlights.set(ANNOTATION_HIGHLIGHT, new HighlightClass(...annotationRanges));
     css.highlights.set(ACTIVE_ANNOTATION_HIGHLIGHT, new HighlightClass(...activeAnnotationRanges));
-    css.highlights.set(SELECTION_HIGHLIGHT, new HighlightClass(...selectionRanges));
     css.highlights.delete(CITATION_HIGHLIGHT);
     if (highlightedCitation) {
       const element = globalThis.document.querySelector<HTMLElement>(
@@ -792,9 +848,14 @@ export default function FoundationSpike() {
       css.highlights?.delete(ANNOTATION_HIGHLIGHT);
       css.highlights?.delete(ACTIVE_ANNOTATION_HIGHLIGHT);
       css.highlights?.delete(CITATION_HIGHLIGHT);
-      css.highlights?.delete(SELECTION_HIGHLIGHT);
     };
-  });
+  }, [
+    activeThreadId,
+    highlightedCitation,
+    previewedThreadId,
+    readingSettings.annotationDisplay,
+    threads,
+  ]);
 
   const openThreadAtPointer = (
     event: ReactMouseEvent<HTMLElement>,
@@ -1075,11 +1136,6 @@ export default function FoundationSpike() {
         ::highlight(${CITATION_HIGHLIGHT}) {
           background-color: #fde047;
           color: #111827;
-        }
-        ::highlight(${SELECTION_HIGHLIGHT}) {
-          background-color: rgba(96, 165, 250, 0.32);
-          text-decoration: underline rgba(37, 99, 235, 0.8) 2px;
-          text-underline-offset: 0.2em;
         }
         .foundation-reader {
           scrollbar-color: ${dark ? '#4b5563' : '#c7c8c0'} transparent;
@@ -1403,7 +1459,8 @@ export default function FoundationSpike() {
             }}
           >
             <article
-              className='foundation-paper mx-auto min-w-0 rounded-xl px-6 py-12 shadow-sm sm:px-14'
+              ref={paperRef}
+              className='foundation-paper relative isolate mx-auto min-w-0 rounded-xl px-6 py-12 shadow-sm sm:px-14'
               style={{
                 backgroundColor: panel,
                 color: foreground,
@@ -1415,6 +1472,21 @@ export default function FoundationSpike() {
               aria-label='SOURCE_DOC 阅读区'
               onMouseUp={captureSelection}
             >
+              <div className='pointer-events-none absolute inset-0 z-0' aria-hidden='true'>
+                {selectionHighlightRects.map((rect) => (
+                  <span
+                    key={rect.id}
+                    data-foundation-highlight={SELECTION_HIGHLIGHT}
+                    className='absolute rounded-[2px] bg-blue-400/30 shadow-[inset_0_-2px_#2563eb]'
+                    style={{
+                      left: rect.left,
+                      top: rect.top,
+                      width: rect.width,
+                      height: rect.height,
+                    }}
+                  />
+                ))}
+              </div>
               {documentModel.blocks.map((item) => {
                 const highlighted = highlightedCitation?.blockId === item.id;
                 const previewed = previewedThreadId
@@ -1434,7 +1506,7 @@ export default function FoundationSpike() {
                     data-testid={`source-block-${item.id}`}
                     data-highlighted={highlighted ? 'true' : 'false'}
                     data-previewed={previewed ? 'true' : 'false'}
-                    className={`relative scroll-m-24 pl-1 ${item.type === 'heading' ? 'mb-5 mt-9 first:mt-0' : 'mb-[1em]'}`}
+                    className={`relative z-10 scroll-m-24 pl-1 ${item.type === 'heading' ? 'mb-5 mt-9 first:mt-0' : 'mb-[1em]'}`}
                     style={{ color: foreground }}
                   >
                     {previewThread &&
@@ -1553,7 +1625,11 @@ export default function FoundationSpike() {
                     <span className='sr-only'>已归档</span>
                   ) : null}
                   {anchor ? (
-                    <span className='sr-only'>当前锚点 · {anchor.selectedBlockIds.length} 块</span>
+                    <span className='sr-only'>
+                      {selectedAnchors.length > 1
+                        ? `已选择 ${selectedAnchors.length} 处独立原文`
+                        : `当前锚点 · ${anchor.selectedBlockIds.length} 块`}
+                    </span>
                   ) : null}
                   {anchor ? (
                     <q data-testid='active-quote' className='sr-only'>
@@ -1561,14 +1637,24 @@ export default function FoundationSpike() {
                     </q>
                   ) : null}
                 </div>
-                <button
-                  className='h-8 w-8 shrink-0 rounded-lg text-lg hover:bg-black/5'
-                  aria-label='打开批注管理'
-                  title='批注管理'
-                  onClick={() => setAnnotationManagerOpen(true)}
-                >
-                  ☷
-                </button>
+                <div className='flex shrink-0 items-center gap-1'>
+                  <button
+                    className='h-8 w-8 rounded-lg text-lg hover:bg-black/5'
+                    aria-label='新建无锚点对话'
+                    title='新建无锚点对话'
+                    onClick={startUnanchoredChat}
+                  >
+                    +
+                  </button>
+                  <button
+                    className='h-8 w-8 rounded-lg text-lg hover:bg-black/5'
+                    aria-label='打开批注管理'
+                    title='批注管理'
+                    onClick={() => setAnnotationManagerOpen(true)}
+                  >
+                    ☷
+                  </button>
+                </div>
               </header>
 
               <section
@@ -1668,15 +1754,6 @@ export default function FoundationSpike() {
                 className='border-t p-3'
                 style={{ borderColor: dark ? '#374151' : '#e5e7eb' }}
               >
-                <button
-                  type='button'
-                  className={`mb-2 text-xs ${attachSelection ? 'text-blue-600' : ''}`}
-                  aria-pressed={attachSelection}
-                  aria-label='将选中文本作为问题附件'
-                  onClick={() => setAttachSelection((value) => !value)}
-                >
-                  ⎘ {attachSelection ? '请选择要附加的文本…' : '附加选中文本'}
-                </button>
                 {questionAttachments.length > 0 ? (
                   <div
                     data-testid='question-attachments-list'
@@ -1893,6 +1970,44 @@ export default function FoundationSpike() {
           </aside>
         ) : null}
       </div>
+      {pendingSelection ? (
+        <div
+          data-selection-action-menu
+          data-testid='selection-action-menu'
+          role='toolbar'
+          aria-label='选中文字操作'
+          className='eink-bordered fixed z-[70] flex h-11 -translate-x-1/2 items-center gap-1 rounded-xl border p-1 shadow-xl'
+          style={{
+            left: pendingSelection.x,
+            top: pendingSelection.y,
+            color: foreground,
+            backgroundColor: panel,
+            borderColor: dark ? '#4b5563' : '#d1d5db',
+          }}
+        >
+          <button
+            type='button'
+            aria-label='针对选中文字提问'
+            className='h-9 rounded-lg px-3 text-xs font-semibold hover:bg-black/5'
+            onClick={useSelectionForQuestion}
+          >
+            ◌ 提问
+          </button>
+          <span
+            className='h-5 w-px'
+            style={{ backgroundColor: dark ? '#4b5563' : '#e5e7eb' }}
+            aria-hidden='true'
+          />
+          <button
+            type='button'
+            aria-label='将选中文字作为附件'
+            className='h-9 rounded-lg px-3 text-xs font-semibold hover:bg-black/5'
+            onClick={useSelectionAsAttachment}
+          >
+            ⎘ 作为附件
+          </button>
+        </div>
+      ) : null}
     </main>
   );
 }

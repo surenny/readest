@@ -24,18 +24,55 @@ test.describe('NL-270 foundation spike', () => {
       element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
 
-    await expect(page.getByText('当前锚点 · 2 块')).toBeVisible();
-    expect(
-      await page.evaluate(() =>
-        Array.from(CSS.highlights.get('foundation-selection') ?? [], (range) => range.toString()),
-      ),
-    ).toEqual([
-      '紧致性把局部信息提升为全局控制，并允许我们从无限过程里抽取收敛子列。',
-      '对连续函数而言，紧致集上的像仍然紧致，因此',
-    ]);
+    await expect(page.getByTestId('selection-action-menu')).toBeVisible();
+    await expect(
+      page.locator('[data-foundation-highlight="foundation-selection"]'),
+    ).not.toHaveCount(0);
+    const highlightGeometry = await page.evaluate(() => {
+      const startNode = document.querySelector('[data-source-text="block-02"]')!.querySelector('p')!
+        .firstChild!;
+      const endNode = document.querySelector('[data-source-text="block-03"]')!.querySelector('p')!
+        .firstChild!;
+      const startRange = document.createRange();
+      startRange.setStart(
+        startNode,
+        startNode.textContent!.indexOf('紧致性把局部信息提升为全局控制'),
+      );
+      startRange.setEnd(startNode, startNode.textContent!.length);
+      const endRange = document.createRange();
+      endRange.setStart(endNode, 0);
+      endRange.setEnd(endNode, endNode.textContent!.indexOf('因此') + '因此'.length);
+      const expected = [
+        ...Array.from(startRange.getClientRects()),
+        ...Array.from(endRange.getClientRects()),
+      ];
+      const actual = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '[data-foundation-highlight="foundation-selection"]',
+        ),
+        (element) => element.getBoundingClientRect(),
+      );
+      return {
+        expected: expected.map((rect) => ({
+          left: Math.round(rect.left),
+          top: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        })),
+        actual: actual.map((rect) => ({
+          left: Math.round(rect.left),
+          top: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        })),
+      };
+    });
+    expect(highlightGeometry.actual).toEqual(highlightGeometry.expected);
     expect(await sourceBlock.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe(
       'rgba(0, 0, 0, 0)',
     );
+    await page.getByRole('button', { name: '针对选中文字提问' }).click();
+    await expect(page.getByText('当前锚点 · 2 块')).toBeVisible();
     await expect(page.getByTestId('active-quote')).toContainText('紧致性把局部信息提升为全局控制');
     await expect(page.getByTestId('active-quote')).toContainText('因此');
     await page.getByRole('textbox', { name: '问题' }).fill('为什么需要紧致性？');
@@ -110,6 +147,7 @@ test.describe('NL-270 foundation spike', () => {
       selection.addRange(range);
       element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
+    await page.getByRole('button', { name: '针对选中文字提问' }).click();
     await page.getByRole('textbox', { name: '问题' }).fill('这段在说什么？');
     await page.getByRole('button', { name: '提问' }).click();
     await page.getByRole('button', { name: '收起批注栏' }).click();
@@ -127,7 +165,7 @@ test.describe('NL-270 foundation spike', () => {
   }) => {
     await page.goto('/foundation-spike');
     const sourceBlock = page.getByTestId('source-block-block-02');
-    const selectText = async (text: string) => {
+    const selectText = async (text: string, action: 'question' | 'attachment' = 'question') => {
       await sourceBlock.evaluate((element, value) => {
         const textNode = element.querySelector('[data-source-text]')!.querySelector('p')!
           .firstChild!;
@@ -140,6 +178,11 @@ test.describe('NL-270 foundation spike', () => {
         selection.addRange(range);
         element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
       }, text);
+      await page
+        .getByRole('button', {
+          name: action === 'question' ? '针对选中文字提问' : '将选中文字作为附件',
+        })
+        .click();
     };
 
     await selectText('紧致性');
@@ -157,8 +200,7 @@ test.describe('NL-270 foundation spike', () => {
 
     await page.getByRole('button', { name: '关闭批注列表' }).click();
     for (const text of ['紧致性', '局部信息', '全局控制']) {
-      await page.getByRole('button', { name: '将选中文本作为问题附件' }).click();
-      await selectText(text);
+      await selectText(text, 'attachment');
     }
     const attachments = page.getByTestId('question-attachments-list');
     await expect(attachments).toHaveCSS('overflow-y', 'auto');
@@ -186,6 +228,7 @@ test.describe('NL-270 foundation spike', () => {
       selection.addRange(range);
       element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
+    await page.getByRole('button', { name: '针对选中文字提问' }).click();
     await page.getByRole('textbox', { name: '问题' }).fill('窄屏批注');
     await page.getByRole('button', { name: '提问' }).click();
 
@@ -269,6 +312,7 @@ test.describe('NL-270 foundation spike', () => {
       selection.addRange(range);
       element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
     });
+    await page.getByRole('button', { name: '针对选中文字提问' }).click();
     await page.getByRole('textbox', { name: '问题' }).fill('解释粗体');
     await page.getByRole('button', { name: '提问' }).click();
     expect(await paragraph.evaluate((element) => element.innerHTML)).toBe(htmlBefore);

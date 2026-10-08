@@ -985,16 +985,19 @@ mod tests {
 
     #[test]
     fn monitor_with_room_keeps_the_shipped_default() {
-        // 1080p minus a taskbar is the everyday case, and the default is picked
-        // to fit it whole; anything larger fits too.
+        // The NL-270 default is intentionally larger than a 1080p work area,
+        // so only a monitor with enough logical room keeps it unchanged.
         assert_eq!(
-            default_window_size(Some((1920.0, 1040.0))),
+            default_window_size(Some((2560.0, 1600.0))),
             DEFAULT_WINDOW_SIZE
         );
-        assert_eq!(
-            default_window_size(Some((2560.0, 1400.0))),
-            DEFAULT_WINDOW_SIZE
-        );
+    }
+
+    #[test]
+    fn common_1080p_work_area_shrinks_the_nl270_default() {
+        let (width, height) = default_window_size(Some((1920.0, 1040.0)));
+        assert!((width - 1728.0).abs() < 0.01, "width {width}");
+        assert!((height - 936.0).abs() < 0.01, "height {height}");
     }
 
     #[test]
