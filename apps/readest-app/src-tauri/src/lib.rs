@@ -55,7 +55,7 @@ mod window_state;
 use tauri::webview::ScrollBarStyle;
 use tauri::{command, Emitter, WebviewUrl, WebviewWindowBuilder, Window};
 
-#[cfg(all(not(debug_assertions), not(custom_protocol)))]
+#[cfg(all(not(debug_assertions), not(feature = "custom-protocol")))]
 compile_error!(
     "release builds must enable the `custom-protocol` feature so the packaged app does not use devUrl"
 );
